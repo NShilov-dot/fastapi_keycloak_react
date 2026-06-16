@@ -80,7 +80,7 @@ async def _create_keycloak_group(tenant_id: UUID, slug: str) -> str | None:
         issuer=str(settings.keycloak_issuer),
         realm=settings.keycloak_realm,
         client_id=settings.keycloak_admin_client_id,
-        client_secret=settings.keycloak_admin_client_secret,
+        client_secret=settings.keycloak_admin_client_secret.get_secret_value(),
     ) as kc:
         group_id = await kc.create_group(spec.group_name, attributes=spec.attributes)
     return group_id

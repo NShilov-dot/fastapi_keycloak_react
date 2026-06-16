@@ -7,8 +7,9 @@ from fastapi import Depends, Header, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.core.errors import ServiceUnavailableError
+from app.core.errors import RateLimitError, ServiceUnavailableError
 from app.core.keycloak_admin import KeycloakAdminClient
+from app.core.rate_limit import RateLimiterDep
 from app.core.security import AuthError, JWKSCache, Principal, verify_token
 from app.core.tenancy import TenantContext, resolve_tenant, session_for_tenant
 
@@ -36,6 +37,8 @@ async def _principal(
     if not authorization or not authorization.lower().startswith("bearer "):
         raise AuthError("Missing or malformed Authorization header")
     token = authorization.split(" ", 1)[1].strip()
+    if not token:
+        raise AuthError("Empty bearer token")
     return await verify_token(
         token,
         jwks=jwks,
@@ -77,6 +80,10 @@ def require_roles(*roles: str):
     return _checker
 
 
+# ---------------------------------------------------------------------------
+# Keycloak Admin
+# ---------------------------------------------------------------------------
+
 def _keycloak_admin_optional(request: Request) -> KeycloakAdminClient | None:
     return request.app.state.keycloak_admin  # type: ignore[no-any-return]
 
@@ -91,3 +98,38 @@ def _keycloak_admin_required(kc: KeycloakAdminOptionalDep) -> KeycloakAdminClien
 
 
 KeycloakAdminDep = Annotated[KeycloakAdminClient, Depends(_keycloak_admin_required)]
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+_WRITE_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
+
+
+async def check_rate_limit(
+    request: Request,
+    principal: PrincipalDep,
+    limiter: RateLimiterDep,
+    settings: SettingsDep,
+) -> None:
+    """Enforce per-user rate limits. Raises RateLimitError (429) on breach."""
+    user_id = principal.subject
+
+    if not await limiter.allow(
+        f"global:{user_id}",
+        limit=settings.rate_limit_global_per_minute,
+        window_seconds=60,
+    ):
+        raise RateLimitError("Too many requests. Please slow down.")
+
+    if request.method in _WRITE_METHODS:
+        if not await limiter.allow(
+            f"writes:{user_id}",
+            limit=settings.rate_limit_writes_per_minute,
+            window_seconds=60,
+        ):
+            raise RateLimitError("Too many write requests. Please slow down.")
+
+
+RateLimitDep = Annotated[None, Depends(check_rate_limit)]

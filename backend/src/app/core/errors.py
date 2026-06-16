@@ -37,3 +37,8 @@ class TenantResolutionError(DomainError):
 class ServiceUnavailableError(DomainError):
     code = "SERVICE_UNAVAILABLE"
     http_status = 503
+
+
+class RateLimitError(DomainError):
+    code = "RATE_LIMITED"
+    http_status = 429

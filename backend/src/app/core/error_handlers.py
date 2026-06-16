@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
+import structlog
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -12,10 +12,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.errors import DomainError
 
+logger = structlog.get_logger(__name__)
+
 
 def _request_id(request: Request) -> str:
-    rid = request.headers.get("x-request-id")
-    return rid or str(uuid.uuid4())
+    # Prefer the ID already set by RequestContextMiddleware to ensure consistency
+    rid = getattr(request.state, "request_id", None)
+    if not rid:
+        rid = request.headers.get("x-request-id")
+    return rid or "unknown"
 
 
 def _envelope(
@@ -30,8 +35,12 @@ def _envelope(
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def _domain(request: Request, exc: DomainError) -> JSONResponse:
+        headers: dict[str, str] = {}
+        if exc.http_status == 429:
+            headers["Retry-After"] = "60"
         return JSONResponse(
             status_code=exc.http_status,
+            headers=headers,
             content=_envelope(
                 code=exc.code,
                 message=exc.message,
@@ -70,6 +79,12 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception(
+            "request.unhandled_exception",
+            path=request.url.path,
+            method=request.method,
+            request_id=_request_id(request),
+        )
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content=_envelope(

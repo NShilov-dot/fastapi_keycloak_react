@@ -15,6 +15,12 @@ from app.core.errors import DomainError
 
 logger = structlog.get_logger(__name__)
 
+# Whitelist of signing algorithms accepted from Keycloak JWKS.
+# Excludes 'none', all HMAC variants (HS*), and legacy weak algorithms.
+_ALLOWED_ALGORITHMS = frozenset(
+    {"RS256", "RS384", "RS512", "ES256", "ES384", "ES512", "PS256", "PS384", "PS512"}
+)
+
 
 class AuthError(DomainError):
     code = "AUTH_FAILED"
@@ -95,15 +101,20 @@ async def verify_token(
     """Verify a Keycloak access token and produce a Principal.
 
     Refreshes JWKS once on `kid` miss to handle realm key rotation without restart.
+    All verification failures are logged at WARNING level for audit purposes.
     """
+    def _fail(reason: str) -> AuthError:
+        logger.warning("auth.token_rejected", reason=reason)
+        return AuthError(reason)
+
     try:
         unverified_header = jwt.get_unverified_header(token)
     except JWTError as exc:
-        raise AuthError("Malformed bearer token") from exc
+        raise _fail("malformed_bearer_token") from exc
 
     kid = unverified_header.get("kid")
     if kid is None:
-        raise AuthError("Token header missing kid")
+        raise _fail("token_header_missing_kid")
 
     keys = await jwks.get()
     key = _find_key(keys, kid)
@@ -111,34 +122,41 @@ async def verify_token(
         keys = await jwks.get(force_refresh=True)
         key = _find_key(keys, kid)
     if key is None:
-        raise AuthError("Signing key not found in JWKS")
+        raise _fail("signing_key_not_found")
+
+    # Enforce algorithm allowlist — reject 'none', HMAC, and unknown algorithms
+    # regardless of what the JWKS key or token header claims.
+    alg = key.get("alg", "RS256")
+    if alg not in _ALLOWED_ALGORITHMS:
+        raise _fail(f"disallowed_signing_algorithm:{alg}")
 
     try:
         claims = jwt.decode(
             token,
             key,
-            algorithms=[key.get("alg", "RS256")],
+            algorithms=[alg],
             audience=audience,
             issuer=jwks.issuer,
             options={"verify_at_hash": False},
             leeway=leeway_seconds,
         )
     except JWTError as exc:
-        raise AuthError(f"Invalid token: {exc}") from exc
+        raise _fail(f"token_decode_failed:{type(exc).__name__}") from exc
 
     subject = claims.get("sub")
     if not isinstance(subject, str):
-        raise AuthError("Token missing 'sub'")
+        raise _fail("token_missing_sub")
 
     tenant_raw = _get_path(claims, tenant_claim)
     if not isinstance(tenant_raw, str):
-        raise AuthError(f"Token missing tenant claim '{tenant_claim}'")
+        raise _fail(f"token_missing_claim:{tenant_claim}")
     try:
         tenant_id = UUID(tenant_raw)
     except ValueError as exc:
-        raise AuthError(f"Tenant claim '{tenant_claim}' is not a UUID") from exc
+        raise _fail(f"tenant_claim_not_uuid:{tenant_claim}") from exc
 
     roles_raw = _get_path(claims, roles_claim) or []
     roles = frozenset(r for r in roles_raw if isinstance(r, str))
 
+    logger.debug("auth.token_verified", subject=subject, tenant_id=str(tenant_id))
     return Principal(subject=subject, tenant_id=tenant_id, roles=roles, raw_claims=claims)
