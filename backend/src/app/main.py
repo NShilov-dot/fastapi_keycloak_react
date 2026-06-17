@@ -16,9 +16,11 @@ from app.core.error_handlers import register_exception_handlers
 from app.core.keycloak_admin import KeycloakAdminClient
 from app.core.logging import configure_logging
 from app.core.middleware import RequestContextMiddleware
+from app.core.oidc import OIDCClient
 from app.core.rate_limit import RateLimiter
 from app.core.security import JWKSCache
 from app.core.security_headers import LimitBodySizeMiddleware, SecurityHeadersMiddleware
+from app.core.sessions import SessionStore
 
 logger = structlog.get_logger(__name__)
 
@@ -49,6 +51,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.rate_limiter = RateLimiter(str(settings.redis_url))
 
+    app.state.oidc = OIDCClient(
+        issuer=str(settings.keycloak_issuer),
+        client_id=settings.oidc_client_id,
+        client_secret=settings.oidc_client_secret.get_secret_value(),
+    )
+
+    app.state.session_store = SessionStore(
+        str(settings.redis_url),
+        ttl_seconds=settings.session_ttl_seconds,
+        idle_seconds=settings.session_idle_seconds,
+    )
+
     get_engine(settings)
     logger.info("app.started", env=settings.app_env, version=__version__)
     try:
@@ -58,6 +72,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if app.state.keycloak_admin is not None:
             await app.state.keycloak_admin.aclose()
         await app.state.rate_limiter.aclose()
+        await app.state.oidc.aclose()
+        await app.state.session_store.aclose()
         await dispose_engine()
         logger.info("app.stopped")
 
@@ -92,14 +108,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 4. Request context (request-id, structured logging, duration)
     app.add_middleware(RequestContextMiddleware)
 
-    # 5. CORS
+    # 5. CORS — allow_credentials=True is required so the browser sends
+    #    the session cookie cross-origin from the SPA in dev (5173 → 8000).
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,
             allow_origins=[str(o).rstrip("/") for o in settings.cors_origins],
             allow_credentials=True,
             allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-            allow_headers=["authorization", "content-type", "x-request-id"],
+            allow_headers=["content-type", "x-request-id"],
         )
 
     register_exception_handlers(app)

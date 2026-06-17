@@ -2,9 +2,10 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
 
 export function Header() {
-  const { keycloak } = useAuth()
-  const username = (keycloak.tokenParsed?.preferred_username as string | undefined)
-    ?? (keycloak.tokenParsed?.email as string | undefined)
+  const { user, logout } = useAuth()
+  // user.subject is the Keycloak `sub` UUID — show its short form until we
+  // wire up a richer /auth/me response (preferred_username, email).
+  const label = user.subject.slice(0, 8)
 
   return (
     <header className="bg-white border-b border-gray-200">
@@ -13,11 +14,9 @@ export function Header() {
           SaaS Tasks
         </Link>
         <div className="flex items-center gap-4">
-          {username && (
-            <span className="text-sm text-gray-500">{username}</span>
-          )}
+          <span className="text-sm text-gray-500">{label}</span>
           <button
-            onClick={() => keycloak.logout({ redirectUri: window.location.origin })}
+            onClick={logout}
             className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
           >
             Logout

@@ -1,15 +1,29 @@
-import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react'
-import keycloak from './keycloak'
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  ReactNode,
+} from 'react'
+import { authApi, Me } from '../api/auth'
+import { ApiError } from '../api/client'
 
 interface AuthContextValue {
-  keycloak: typeof keycloak
-  ready: boolean
+  user: Me
+  logout: () => void
 }
 
 const AuthCtx = createContext<AuthContextValue | null>(null)
 
+/** Send the browser to /api/auth/login, preserving where we are. */
+function redirectToLogin(): void {
+  const returnTo = window.location.pathname + window.location.search
+  window.location.assign(`/api/v1/auth/login?return_to=${encodeURIComponent(returnTo)}`)
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [ready, setReady]     = useState(false)
+  const [user, setUser]       = useState<Me | null>(null)
   const [error, setError]     = useState<string | null>(null)
   const initialized           = useRef(false)
 
@@ -18,24 +32,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (initialized.current) return
     initialized.current = true
 
-    // Set token-refresh handler BEFORE init so it fires even during startup
-    keycloak.onTokenExpired = () => {
-      keycloak.updateToken(30).catch(() => {
-        console.warn('[auth] Silent token refresh failed — logging out')
-        keycloak.logout()
-      })
-    }
-
-    keycloak
-      .init({
-        onLoad: 'login-required',
-        pkceMethod: 'S256',
-        checkLoginIframe: false,
-      })
-      .then(() => setReady(true))
+    authApi.me()
+      .then(setUser)
       .catch((err: unknown) => {
-        console.error('[auth] Keycloak init failed', err)
-        setError('Could not connect to the authentication server. Please try again later.')
+        if (err instanceof ApiError && err.status === 401) {
+          // No session — bounce to login. The backend will redirect us back.
+          redirectToLogin()
+          return
+        }
+        console.error('[auth] /auth/me failed', err)
+        setError('Could not contact the API. Please try again later.')
       })
   }, [])
 
@@ -43,7 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center space-y-3 max-w-sm px-4">
-          <p className="text-gray-700 font-medium">Authentication unavailable</p>
+          <p className="text-gray-700 font-medium">Service unavailable</p>
           <p className="text-sm text-gray-500">{error}</p>
           <button
             onClick={() => window.location.reload()}
@@ -56,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     )
   }
 
-  if (!ready) {
+  if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="w-8 h-8 border-4 border-gray-200 border-t-blue-600 rounded-full animate-spin" />
@@ -64,8 +70,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     )
   }
 
+  const logout = () => {
+    void authApi.logout().finally(() => {
+      window.location.assign('/')
+    })
+  }
+
   return (
-    <AuthCtx.Provider value={{ keycloak, ready }}>
+    <AuthCtx.Provider value={{ user, logout }}>
       {children}
     </AuthCtx.Provider>
   )
@@ -76,3 +88,5 @@ export function useAuth(): AuthContextValue {
   if (!ctx) throw new Error('useAuth must be used within AuthProvider')
   return ctx
 }
+
+export { redirectToLogin }

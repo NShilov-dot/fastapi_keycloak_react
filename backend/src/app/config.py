@@ -38,6 +38,20 @@ class Settings(BaseSettings):
     keycloak_admin_client_id: str = "saas-backend-admin"
     keycloak_admin_client_secret: SecretStr = SecretStr("")
 
+    # OIDC client (Authorization Code + PKCE) — backend acts as confidential client
+    oidc_client_id: str = "saas-backend"
+    oidc_client_secret: SecretStr = SecretStr("change-me-in-prod")
+    # Public-facing URL of THIS backend (the URL Keycloak redirects users back to).
+    # Must be reachable by the user's browser, not just the Docker network.
+    public_base_url: AnyHttpUrl = AnyHttpUrl("http://localhost:8000")
+    # Public-facing URL of the frontend (used as the post-logout / post-login landing).
+    frontend_base_url: AnyHttpUrl = AnyHttpUrl("http://localhost:5173")
+
+    # Sessions — opaque token in HttpOnly cookie, payload in Redis
+    session_cookie_name: str = "saas_session"
+    session_ttl_seconds: int = 36_000  # 10h sliding lifetime (matches Keycloak default)
+    session_idle_seconds: int = 1_800  # 30m idle timeout
+
     # Rate limiting (per authenticated user, fixed-window counters in Redis)
     rate_limit_global_per_minute: int = 120   # all requests
     rate_limit_writes_per_minute: int = 30    # POST / PATCH / DELETE / PUT
@@ -69,6 +83,10 @@ class Settings(BaseSettings):
             errors.append("CORS_ORIGINS must be set in production")
         if str(self.keycloak_issuer).startswith("http://"):
             errors.append("KEYCLOAK_ISSUER must use HTTPS in production")
+        if str(self.public_base_url).startswith("http://"):
+            errors.append("PUBLIC_BASE_URL must use HTTPS in production")
+        if self.oidc_client_secret.get_secret_value() in {"", "change-me-in-prod"}:
+            errors.append("OIDC_CLIENT_SECRET must be set to a real secret in production")
         if errors:
             raise ValueError("Production configuration errors: " + "; ".join(errors))
 

@@ -1,4 +1,15 @@
-import keycloak from '../auth/keycloak'
+/**
+ * Backend-for-Frontend client.
+ *
+ * Auth model: HttpOnly session cookie set by the backend (BFF pattern).
+ * The browser never holds an access_token — `credentials: 'include'` makes
+ * fetch send the session cookie automatically on every API call.
+ *
+ * On 401 we bounce to /api/v1/auth/login so the backend can start an OIDC
+ * round-trip with Keycloak. The user lands back on the page they came from.
+ */
+
+import { redirectToLogin } from '../auth/AuthProvider'
 
 export class ApiError extends Error {
   constructor(
@@ -10,31 +21,26 @@ export class ApiError extends Error {
   }
 }
 
-async function getToken(): Promise<string> {
-  try {
-    await keycloak.updateToken(30)
-  } catch {
-    keycloak.logout()
-    throw new Error('Session expired')
-  }
-  if (!keycloak.token) throw new Error('Not authenticated')
-  return keycloak.token
-}
-
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const token = await getToken()
   const res = await fetch(`/api${path}`, {
     method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
+
+  if (res.status === 401) {
+    // Session is dead — kick the user back through the OIDC flow.
+    // /auth/me is the one exception (the AuthProvider handles that case itself).
+    if (!path.startsWith('/v1/auth/me')) {
+      redirectToLogin()
+    }
+    throw new ApiError(401, null)
+  }
 
   if (!res.ok) {
     const errBody = await res.json().catch(() => null)
