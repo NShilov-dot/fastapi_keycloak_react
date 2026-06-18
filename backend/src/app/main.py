@@ -49,7 +49,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.keycloak_admin = None
         logger.info("keycloak_admin.disabled")
 
-    app.state.rate_limiter = RateLimiter(str(settings.redis_url))
+    # Rate-limit counters can live on a dedicated Redis so pressure on the session
+    # store cannot disable the limiter (falls back to redis_url when unset).
+    app.state.rate_limiter = RateLimiter(settings.rate_limit_redis_url_effective)
 
     app.state.oidc = OIDCClient(
         issuer=str(settings.keycloak_issuer),
@@ -57,10 +59,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         client_secret=settings.oidc_client_secret.get_secret_value(),
     )
 
+    token_cipher = settings.build_token_cipher()
+    if token_cipher is None:
+        logger.warning("session_store.encryption_disabled")  # plaintext tokens at rest
     app.state.session_store = SessionStore(
         str(settings.redis_url),
         ttl_seconds=settings.session_ttl_seconds,
         idle_seconds=settings.session_idle_seconds,
+        cipher=token_cipher,
     )
 
     get_engine(settings)
@@ -93,23 +99,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
 
-    # Order matters: outermost middleware runs first on request, last on response.
+    # Starlette wraps middleware so the LAST added is the OUTERMOST (it runs first
+    # on the request and last on the response). They are therefore added inner→outer
+    # below; the intended request-time order is the reverse of this call order:
+    #   CORS → SecurityHeaders → RequestContext → TrustedHost → BodyLimit → routes.
+    # Security headers / CORS sit outside the inner layers so even their error
+    # responses (413, 400 bad-host, 500) carry the right headers.
 
-    # 1. Body size limit — reject oversized payloads before any parsing
+    # Innermost: reject oversized payloads before the route consumes the body.
     app.add_middleware(LimitBodySizeMiddleware, max_bytes=settings.max_body_size_bytes)
 
-    # 2. Security headers on every response
-    app.add_middleware(SecurityHeadersMiddleware, is_prod=settings.is_prod)
-
-    # 3. Trusted host validation (only when an allowlist is configured)
+    # Trusted host validation (only when an allowlist is configured)
     if settings.trusted_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts)
 
-    # 4. Request context (request-id, structured logging, duration)
+    # Request context (request-id, structured logging, duration)
     app.add_middleware(RequestContextMiddleware)
 
-    # 5. CORS — allow_credentials=True is required so the browser sends
-    #    the session cookie cross-origin from the SPA in dev (5173 → 8000).
+    # Security headers on every response (outside the layers above so their error
+    # responses are decorated too).
+    app.add_middleware(SecurityHeadersMiddleware, is_prod=settings.is_prod)
+
+    # Outermost: CORS — allow_credentials=True is required so the browser sends
+    # the session cookie cross-origin from the SPA in dev (5173 → 8000). Added
+    # last so it wraps everything and error responses still receive CORS headers.
     if settings.cors_origins:
         app.add_middleware(
             CORSMiddleware,

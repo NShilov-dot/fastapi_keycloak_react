@@ -8,14 +8,13 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.core.errors import RateLimitError, ServiceUnavailableError
+from app.core.errors import CsrfError, RateLimitError, ServiceUnavailableError
 from app.core.keycloak_admin import KeycloakAdminClient
 from app.core.oidc import OIDCClient, OIDCError
 from app.core.rate_limit import RateLimiterDep
 from app.core.security import AuthError, JWKSCache, Principal, verify_token
 from app.core.sessions import SessionData, SessionStore
 from app.core.tenancy import TenantContext, resolve_tenant, session_for_tenant
-
 
 # ---------------------------------------------------------------------------
 # Settings / JWKS / OIDC / SessionStore providers
@@ -109,7 +108,7 @@ async def _principal(
     oidc: OIDCDep,
     store: SessionStoreDep,
 ) -> Principal:
-    sid = request.cookies.get(settings.session_cookie_name)
+    sid = request.cookies.get(settings.session_cookie_effective_name)
     if not sid:
         raise AuthError("Not authenticated")
 
@@ -127,6 +126,7 @@ async def _principal(
             tenant_claim=settings.keycloak_tenant_claim,
             roles_claim=settings.keycloak_roles_claim,
             leeway_seconds=settings.keycloak_leeway_seconds,
+            expected_token_types=frozenset(settings.keycloak_expected_token_types),
         )
     except AuthError:
         # Session-backed token failed verification — kill the session.
@@ -201,7 +201,29 @@ KeycloakAdminDep = Annotated[KeycloakAdminClient, Depends(_keycloak_admin_requir
 # Rate limiting
 # ---------------------------------------------------------------------------
 
+# Non-safe HTTP methods — rate-limited as writes and CSRF-checked.
 _WRITE_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
+
+
+def client_ip(request: Request) -> str:
+    """Client IP for unauthenticated rate limiting.
+
+    Prefers the edge proxy's X-Real-IP header. nginx sets it from $remote_addr with
+    proxy_set_header (overwrite, not append), so a client-supplied value is replaced
+    by the real connecting IP — unlike X-Forwarded-For, whose leftmost entry uvicorn
+    trusts under `--forwarded-allow-ips *` and which nginx merely *appends* to, leaving
+    it attacker-spoofable. X-Real-IP also stays per-client behind nginx (request.client
+    would otherwise collapse to the proxy's container IP for every caller).
+
+    Deployment requirement: the backend must only be reachable through the edge proxy
+    that sets X-Real-IP; do not expose it directly. With no proxy (e.g. local direct
+    hits) we fall back to the socket peer.
+    """
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip:
+        return real_ip.strip()
+    client = request.client
+    return client.host if client is not None else "unknown"
 
 
 async def check_rate_limit(
@@ -210,7 +232,7 @@ async def check_rate_limit(
     limiter: RateLimiterDep,
     settings: SettingsDep,
 ) -> None:
-    """Enforce per-user rate limits. Raises RateLimitError (429) on breach."""
+    """Enforce per-user (and aggregate per-tenant) rate limits. 429 on breach."""
     user_id = principal.subject
 
     if not await limiter.allow(
@@ -220,13 +242,75 @@ async def check_rate_limit(
     ):
         raise RateLimitError("Too many requests. Please slow down.")
 
-    if request.method in _WRITE_METHODS:
-        if not await limiter.allow(
-            f"writes:{user_id}",
-            limit=settings.rate_limit_writes_per_minute,
-            window_seconds=60,
-        ):
-            raise RateLimitError("Too many write requests. Please slow down.")
+    # Aggregate per-tenant ceiling — backstop against one tenant spreading load
+    # across many distinct subjects to slip under the per-subject limit.
+    if settings.rate_limit_tenant_per_minute > 0 and not await limiter.allow(
+        f"tenant:{principal.tenant_id}",
+        limit=settings.rate_limit_tenant_per_minute,
+        window_seconds=60,
+    ):
+        raise RateLimitError("Tenant request quota exceeded. Please slow down.")
+
+    if request.method in _WRITE_METHODS and not await limiter.allow(
+        f"writes:{user_id}",
+        limit=settings.rate_limit_writes_per_minute,
+        window_seconds=60,
+    ):
+        raise RateLimitError("Too many write requests. Please slow down.")
 
 
 RateLimitDep = Annotated[None, Depends(check_rate_limit)]
+
+
+async def check_anon_rate_limit(
+    request: Request,
+    limiter: RateLimiterDep,
+    settings: SettingsDep,
+) -> None:
+    """IP-keyed rate limit for unauthenticated / pre-auth endpoints (login, callback).
+
+    Does NOT depend on a Principal, so it actually runs before authentication.
+    Fail-closed: a flooded/unavailable Redis must not hand an attacker unlimited
+    login attempts that fill the session store or hammer Keycloak.
+    """
+    ip = client_ip(request)
+    if not await limiter.allow(
+        f"auth:{ip}",
+        limit=settings.rate_limit_auth_per_minute_per_ip,
+        window_seconds=60,
+        fail_closed=True,
+    ):
+        raise RateLimitError("Too many authentication attempts. Please try again shortly.")
+
+
+AnonRateLimitDep = Annotated[None, Depends(check_anon_rate_limit)]
+
+
+async def check_csrf(request: Request, settings: SettingsDep) -> None:
+    """Defense-in-depth CSRF check for cookie-authenticated, state-changing requests.
+
+    SameSite=Lax + JSON content-type + the CORS allowlist already block classic
+    form/fetch CSRF; this adds an explicit Origin/Referer allowlist so a future
+    SameSite regression or a sibling-subdomain foothold cannot forge writes.
+
+    Browsers always attach Origin to cross-site unsafe requests, so a present-but-
+    mismatched Origin is rejected. A wholly absent Origin AND Referer is allowed
+    (non-browser clients: server-to-server, curl, tests) — SameSite still covers
+    the browser case.
+    """
+    if request.method not in _WRITE_METHODS:
+        return
+    allowed = settings.csrf_allowed_origins
+    origin = request.headers.get("origin")
+    if origin is not None:
+        if origin.rstrip("/") not in allowed:
+            raise CsrfError("Cross-origin request blocked")
+        return
+    referer = request.headers.get("referer")
+    if referer is not None and not any(
+        referer.rstrip("/") == o or referer.startswith(o + "/") for o in allowed
+    ):
+        raise CsrfError("Cross-origin request blocked")
+
+
+CsrfDep = Annotated[None, Depends(check_csrf)]

@@ -14,16 +14,17 @@ function isUnauthorized(err: unknown) {
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (err) => {
-      if (isUnauthorized(err)) {
-        // Session expired mid-session; let AuthProvider's onTokenExpired handle it
-        console.warn('Query 401 — token refresh should handle this')
+      // On 401 the api client already bounces through the OIDC login flow
+      // (with a loop-breaker). Nothing to do here beyond optional dev logging.
+      if (isUnauthorized(err) && import.meta.env.DEV) {
+        console.warn('[query] 401 — redirecting to login')
       }
     },
   }),
   mutationCache: new MutationCache({
     onError: (err) => {
-      if (isUnauthorized(err)) {
-        console.warn('Mutation 401 — token refresh should handle this')
+      if (isUnauthorized(err) && import.meta.env.DEV) {
+        console.warn('[mutation] 401 — redirecting to login')
       }
     },
   }),

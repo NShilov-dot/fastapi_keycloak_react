@@ -70,6 +70,17 @@ async def test_fails_open_when_redis_is_unavailable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fails_closed_when_requested() -> None:
+    """Pre-auth / auth-flow scopes deny on Redis failure instead of allowing."""
+    limiter, fake = _make_limiter()
+    fake.raise_on_next = True
+    allowed = await limiter.allow(
+        "auth:1.2.3.4", limit=5, window_seconds=60, fail_closed=True
+    )
+    assert allowed is False
+
+
+@pytest.mark.asyncio
 async def test_limit_of_one_allows_first_then_denies() -> None:
     limiter, _ = _make_limiter()
     assert await limiter.allow("strict", limit=1, window_seconds=60) is True

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
-from app.core.deps import PrincipalDep, SessionDep, check_rate_limit
+from app.core.deps import PrincipalDep, SessionDep, check_csrf, check_rate_limit
 from app.core.security import AuthError, Principal
 from app.modules.tasks.application.dtos import ListTasksQuery
 from app.modules.tasks.application.services import TaskService
@@ -19,7 +19,13 @@ from app.modules.tasks.interface.schemas import (
     UpdateTaskRequest,
 )
 
-router = APIRouter(prefix="/tasks", tags=["tasks"], dependencies=[Depends(check_rate_limit)])
+router = APIRouter(
+    prefix="/tasks",
+    tags=["tasks"],
+    # check_csrf is a no-op for safe methods (GET) and enforces an Origin/Referer
+    # allowlist on writes as defense-in-depth beyond SameSite=Lax.
+    dependencies=[Depends(check_rate_limit), Depends(check_csrf)],
+)
 
 
 def _owner_id(principal: Principal) -> UUID:

@@ -67,12 +67,15 @@ class _FakePipeline:
         return results
 
 
-def _make_store(*, ttl: int = 3600, idle: int = 1800) -> tuple[SessionStore, _FakeRedis]:
+def _make_store(
+    *, ttl: int = 3600, idle: int = 1800, cipher: object | None = None
+) -> tuple[SessionStore, _FakeRedis]:
     fake = _FakeRedis()
     store = SessionStore.__new__(SessionStore)
     store._redis = fake  # type: ignore[attr-defined]
     store._ttl = ttl  # type: ignore[attr-defined]
     store._idle = idle  # type: ignore[attr-defined]
+    store._cipher = cipher  # type: ignore[attr-defined]
     return store, fake
 
 
@@ -208,3 +211,71 @@ async def test_login_state_is_single_use() -> None:
 async def test_pop_unknown_state_returns_none() -> None:
     store, _ = _make_store()
     assert await store.pop_login_state("never-set") is None
+
+
+# ---------------------------------------------------------------------------
+# Encryption at rest
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tokens_are_encrypted_at_rest_and_round_trip() -> None:
+    from app.core.crypto import TokenCipher, generate_key
+
+    # Distinctive markers: random base64 ciphertext won't contain these verbatim.
+    marker = "ACCESS-TOKEN-PLAINTEXT-MARKER"
+    refresh_marker = "REFRESH-TOKEN-PLAINTEXT-MARKER"
+    now = int(time.time())
+    data = SessionData(
+        subject="user-1",
+        access_token=marker,
+        refresh_token=refresh_marker,
+        id_token="IT",
+        access_expires_at=now + 300,
+        created_at=now,
+    )
+    cipher = TokenCipher.from_raw_keys([generate_key()])
+    store, fake = _make_store(cipher=cipher)
+    sid = await store.create(data)
+
+    raw, _ = fake.store[f"sess:{sid}"]
+    # The raw Redis value must NOT expose the token plaintext or be JSON.
+    assert marker not in raw and refresh_marker not in raw
+    assert not raw.lstrip().startswith("{")
+
+    got = await store.get(sid)
+    assert got is not None
+    assert got.access_token == marker and got.refresh_token == refresh_marker
+
+
+@pytest.mark.asyncio
+async def test_legacy_plaintext_row_is_still_readable_after_enabling_encryption() -> None:
+    """A row written before encryption (plaintext JSON) must decode on read."""
+    from app.core.crypto import TokenCipher, generate_key
+
+    plain_store, fake = _make_store()  # no cipher → writes plaintext JSON
+    sid = await plain_store.create(_session_data())
+
+    # Re-bind the SAME fake redis to a store that now has a cipher.
+    enc_store = SessionStore.__new__(SessionStore)
+    enc_store._redis = fake  # type: ignore[attr-defined]
+    enc_store._ttl = 3600  # type: ignore[attr-defined]
+    enc_store._idle = 1800  # type: ignore[attr-defined]
+    enc_store._cipher = TokenCipher.from_raw_keys([generate_key()])  # type: ignore[attr-defined]
+
+    got = await enc_store.get(sid)
+    assert got is not None and got.access_token == "AT"
+
+
+@pytest.mark.asyncio
+async def test_login_state_is_encrypted_at_rest() -> None:
+    from app.core.crypto import TokenCipher, generate_key
+
+    cipher = TokenCipher.from_raw_keys([generate_key()])
+    store, fake = _make_store(cipher=cipher)
+    ls = LoginState(pkce_verifier="VERIFIER", redirect_uri="http://cb", return_to="/tasks")
+    await store.save_login_state("state-1", ls)
+
+    raw, _ = fake.store["login:state-1"]
+    assert "VERIFIER" not in raw
+    assert await store.pop_login_state("state-1") == ls

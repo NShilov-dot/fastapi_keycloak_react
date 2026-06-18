@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import time
 import uuid
 
@@ -10,10 +11,16 @@ from starlette.responses import Response
 
 logger = structlog.get_logger(__name__)
 
+# A client-supplied X-Request-Id is untrusted: cap length and restrict to a safe
+# charset so it cannot inject newlines/control chars into logs or be reflected as
+# an oversized/forged response header. Anything else gets a fresh uuid4.
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+        incoming = request.headers.get("x-request-id")
+        request_id = incoming if incoming and _REQUEST_ID_RE.match(incoming) else str(uuid.uuid4())
         structlog.contextvars.bind_contextvars(
             request_id=request_id,
             method=request.method,

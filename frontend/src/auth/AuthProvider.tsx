@@ -16,10 +16,51 @@ interface AuthContextValue {
 
 const AuthCtx = createContext<AuthContextValue | null>(null)
 
-/** Send the browser to /api/auth/login, preserving where we are. */
-function redirectToLogin(): void {
+// Loop-breaker: a session that keeps coming back 401 (Redis eviction between
+// callback and /me, JWKS rotation invalidating a freshly-issued token, etc.)
+// would otherwise ping-pong /login → Keycloak → /callback → /me 401 → /login …
+// forever, hammering Keycloak. We cap redirects within a short window.
+const _REDIRECT_LOG_KEY = 'auth:redirects'
+const _REDIRECT_WINDOW_MS = 10_000
+const _REDIRECT_MAX = 3
+
+function _recentRedirects(now: number): number[] {
+  try {
+    const raw = sessionStorage.getItem(_REDIRECT_LOG_KEY)
+    const arr: number[] = raw ? JSON.parse(raw) : []
+    return arr.filter((t) => now - t < _REDIRECT_WINDOW_MS)
+  } catch {
+    return []
+  }
+}
+
+/** Clear the redirect counter once a session is successfully established. */
+function clearRedirectLoopState(): void {
+  try {
+    sessionStorage.removeItem(_REDIRECT_LOG_KEY)
+  } catch {
+    /* sessionStorage unavailable — nothing to clear */
+  }
+}
+
+/**
+ * Send the browser to /api/auth/login, preserving where we are.
+ * Returns false (without navigating) if we appear to be in a redirect loop.
+ */
+function redirectToLogin(): boolean {
+  const now = Date.now()
+  const recent = _recentRedirects(now)
+  if (recent.length >= _REDIRECT_MAX) {
+    return false
+  }
+  try {
+    sessionStorage.setItem(_REDIRECT_LOG_KEY, JSON.stringify([...recent, now]))
+  } catch {
+    /* sessionStorage unavailable — proceed without loop tracking */
+  }
   const returnTo = window.location.pathname + window.location.search
   window.location.assign(`/api/v1/auth/login?return_to=${encodeURIComponent(returnTo)}`)
+  return true
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -33,14 +74,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initialized.current = true
 
     authApi.me()
-      .then(setUser)
+      .then((me) => {
+        clearRedirectLoopState()
+        setUser(me)
+      })
       .catch((err: unknown) => {
         if (err instanceof ApiError && err.status === 401) {
-          // No session — bounce to login. The backend will redirect us back.
-          redirectToLogin()
+          // No session — bounce to login. The backend will redirect us back,
+          // unless we're stuck in a redirect loop, in which case show an error
+          // instead of hammering Keycloak.
+          if (!redirectToLogin()) {
+            setError(
+              'Не удалось установить сессию (повторяющийся редирект). ' +
+                'Попробуйте позже или войдите заново.',
+            )
+          }
           return
         }
-        console.error('[auth] /auth/me failed', err)
+        if (import.meta.env.DEV) console.error('[auth] /auth/me failed', err)
         setError('Could not contact the API. Please try again later.')
       })
   }, [])
@@ -52,7 +103,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           <p className="text-gray-700 font-medium">Service unavailable</p>
           <p className="text-sm text-gray-500">{error}</p>
           <button
-            onClick={() => window.location.reload()}
+            onClick={() => {
+              clearRedirectLoopState()
+              window.location.assign('/')
+            }}
             className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
           >
             Retry
@@ -71,9 +125,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = () => {
-    void authApi.logout().finally(() => {
-      window.location.assign('/')
-    })
+    void authApi.logout()
+      .then((res) => {
+        clearRedirectLoopState()
+        // RP-Initiated Logout: if the backend returns a Keycloak end_session URL,
+        // follow it so the browser's SSO session is also cleared (otherwise a
+        // later login silently re-authenticates on shared devices).
+        window.location.assign(res?.logout_url || '/')
+      })
+      .catch(() => {
+        window.location.assign('/')
+      })
   }
 
   return (

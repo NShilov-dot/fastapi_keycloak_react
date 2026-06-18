@@ -97,11 +97,18 @@ async def verify_token(
     tenant_claim: str,
     roles_claim: str,
     leeway_seconds: int,
+    expected_token_types: frozenset[str] = frozenset(),
 ) -> Principal:
     """Verify a Keycloak access token and produce a Principal.
 
     Refreshes JWKS once on `kid` miss to handle realm key rotation without restart.
     All verification failures are logged at WARNING level for audit purposes.
+
+    `expected_token_types` is matched against the `typ` PAYLOAD claim (Keycloak emits
+    "Bearer" for access tokens, "ID"/"Refresh"/"Logout" for the others; the JOSE
+    *header* typ is always "JWT" and cannot distinguish them). This is the one trust
+    boundary asserting "this is an access token", rejecting an id/refresh/logout token
+    presented in its place. Checked after signature verification. Empty set disables it.
     """
     def _fail(reason: str) -> AuthError:
         logger.warning("auth.token_rejected", reason=reason)
@@ -137,11 +144,24 @@ async def verify_token(
             algorithms=[alg],
             audience=audience,
             issuer=jwks.issuer,
-            options={"verify_at_hash": False},
-            leeway=leeway_seconds,
+            options={
+                "verify_at_hash": False,
+                # Reject tokens that simply omit the claims we rely on, rather than
+                # silently passing validation when aud/exp/iss/sub are absent.
+                "require_aud": True,
+                "require_exp": True,
+                "require_iss": True,
+                "require_sub": True,
+                # python-jose takes leeway via options, not a kwarg.
+                "leeway": leeway_seconds,
+            },
         )
     except JWTError as exc:
         raise _fail(f"token_decode_failed:{type(exc).__name__}") from exc
+
+    # Token-type check on the verified PAYLOAD claim (not the JOSE header).
+    if expected_token_types and claims.get("typ") not in expected_token_types:
+        raise _fail(f"unexpected_token_type:{claims.get('typ')}")
 
     subject = claims.get("sub")
     if not isinstance(subject, str):
@@ -155,7 +175,11 @@ async def verify_token(
     except ValueError as exc:
         raise _fail(f"tenant_claim_not_uuid:{tenant_claim}") from exc
 
-    roles_raw = _get_path(claims, roles_claim) or []
+    roles_raw = _get_path(claims, roles_claim)
+    # Only a list yields roles; a string/dict claim must not be iterated into
+    # character/key "roles" (fail closed — grant nothing on a malformed claim).
+    if not isinstance(roles_raw, list):
+        roles_raw = []
     roles = frozenset(r for r in roles_raw if isinstance(r, str))
 
     logger.debug("auth.token_verified", subject=subject, tenant_id=str(tenant_id))

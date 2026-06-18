@@ -42,3 +42,8 @@ class ServiceUnavailableError(DomainError):
 class RateLimitError(DomainError):
     code = "RATE_LIMITED"
     http_status = 429
+
+
+class CsrfError(DomainError):
+    code = "CSRF_FAILED"
+    http_status = 403

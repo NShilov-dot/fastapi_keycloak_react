@@ -26,6 +26,8 @@ from typing import Any
 import redis.asyncio as aioredis
 import structlog
 
+from app.core.crypto import TokenCipher, TokenCipherError
+
 logger = structlog.get_logger(__name__)
 
 _SESSION_KEY_PREFIX = "sess:"
@@ -65,6 +67,7 @@ class SessionStore:
         *,
         ttl_seconds: int,
         idle_seconds: int,
+        cipher: TokenCipher | None = None,
         _redis: aioredis.Redis | None = None,
     ) -> None:
         self._redis: aioredis.Redis = _redis or aioredis.from_url(  # type: ignore[assignment]
@@ -72,6 +75,38 @@ class SessionStore:
         )
         self._ttl = ttl_seconds
         self._idle = idle_seconds
+        # When set, token-bearing payloads are AES-256-GCM encrypted at rest.
+        self._cipher = cipher
+
+    # ------------------------------------------------------------------
+    # Serialization (encrypt-at-rest when a cipher is configured)
+    # ------------------------------------------------------------------
+
+    def _dumps(self, payload: dict[str, Any]) -> str:
+        blob = json.dumps(payload)
+        return self._cipher.encrypt(blob) if self._cipher is not None else blob
+
+    def _loads(self, raw: str | bytes) -> dict[str, Any] | None:
+        """Decrypt+parse a stored value, tolerating legacy plaintext rows.
+
+        Returns None on unrecoverable corruption (caller drops the key).
+        """
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        blob = raw
+        if self._cipher is not None:
+            try:
+                blob = self._cipher.decrypt(raw)
+            except TokenCipherError:
+                # Migration path: a row written before encryption was enabled is
+                # plaintext JSON. Anything else is genuinely undecryptable.
+                if not raw.lstrip().startswith("{"):
+                    return None
+                blob = raw
+        try:
+            return json.loads(blob)  # type: ignore[no-any-return]
+        except json.JSONDecodeError:
+            return None
 
     # ------------------------------------------------------------------
     # Sessions
@@ -82,7 +117,7 @@ class SessionStore:
         sid = generate_session_id()
         await self._redis.set(
             _SESSION_KEY_PREFIX + sid,
-            json.dumps(asdict(data)),
+            self._dumps(asdict(data)),
             ex=self._idle,
         )
         return sid
@@ -91,9 +126,8 @@ class SessionStore:
         raw = await self._redis.get(_SESSION_KEY_PREFIX + sid)
         if raw is None:
             return None
-        try:
-            payload: dict[str, Any] = json.loads(raw)
-        except json.JSONDecodeError:
+        payload = self._loads(raw)
+        if payload is None:
             logger.warning("session.corrupt_payload", sid_prefix=sid[:6])
             await self.delete(sid)
             return None
@@ -113,7 +147,7 @@ class SessionStore:
         """Overwrite session payload (used after token refresh). Resets idle TTL."""
         await self._redis.set(
             _SESSION_KEY_PREFIX + sid,
-            json.dumps(asdict(data)),
+            self._dumps(asdict(data)),
             ex=self._idle,
         )
 
@@ -127,7 +161,7 @@ class SessionStore:
     async def save_login_state(self, state: str, login: LoginState) -> None:
         await self._redis.set(
             _LOGIN_KEY_PREFIX + state,
-            json.dumps(asdict(login)),
+            self._dumps(asdict(login)),
             ex=_LOGIN_TTL_SECONDS,
         )
 
@@ -140,9 +174,12 @@ class SessionStore:
         raw, _ = await pipe.execute()
         if raw is None:
             return None
+        payload = self._loads(raw)
+        if payload is None:
+            return None
         try:
-            return LoginState(**json.loads(raw))
-        except (json.JSONDecodeError, TypeError):
+            return LoginState(**payload)
+        except TypeError:
             return None
 
     async def aclose(self) -> None:
