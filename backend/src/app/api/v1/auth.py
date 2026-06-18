@@ -2,14 +2,19 @@
 
 Flow:
   1. Browser → GET  /v1/auth/login?return_to=/tasks
-     Backend generates state + PKCE, stores them in Redis, returns 307 to
-     Keycloak's authorize URL.
+     Backend generates state + PKCE, stores them in Redis, sets a short-lived
+     `oidc_state` cookie on the initiating browser, and 307s to Keycloak.
 
   2. Browser → Keycloak (user logs in)
      Keycloak → 302 to /v1/auth/callback?code=...&state=...
 
-  3. Backend pops login_state from Redis, exchanges code → tokens, stores
-     them in a new session, sets HttpOnly cookie, redirects to return_to.
+  3. Backend requires the request to (a) carry the `oidc_state` cookie that
+     was set at step 1 AND (b) have it match the `state` query param —
+     constant-time compare. Without that binding, an attacker could relay a
+     valid (code, state) pair to a victim and have THEIR browser land a
+     session for the attacker's identity (OIDC Login CSRF / session fixation,
+     RFC 6749 §10.12). After validation it pops the login_state from Redis,
+     exchanges code → tokens, and creates the actual user session.
 
   4. All future API calls: browser sends the session cookie; the SessionDep
      in deps.py turns it into a Principal.
@@ -23,6 +28,7 @@ Flow:
 
 from __future__ import annotations
 
+import secrets
 import time
 
 import structlog
@@ -38,6 +44,11 @@ from app.core.sessions import LoginState, SessionData
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Cookie that binds an OIDC `state` value to the browser that initiated /login.
+# Scoped to /v1/auth/callback so it is never sent to any other endpoint.
+_OIDC_STATE_COOKIE = "oidc_state"
+_OIDC_STATE_COOKIE_TTL_SECONDS = 300  # match LoginState TTL in Redis
+
 
 class _AuthFlowError(DomainError):
     code = "AUTH_FLOW_ERROR"
@@ -46,6 +57,10 @@ class _AuthFlowError(DomainError):
 
 def _callback_url(public_base_url: str) -> str:
     return public_base_url.rstrip("/") + "/v1/auth/callback"
+
+
+def _callback_cookie_path() -> str:
+    return "/v1/auth/callback"
 
 
 def _is_safe_return_to(return_to: str | None) -> str:
@@ -85,8 +100,10 @@ async def login(
         state=state,
         pkce_challenge=pkce.challenge,
     )
+    response = RedirectResponse(authorize_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    _set_oidc_state_cookie(response, state, settings)
     logger.info("auth.login_redirect", state_prefix=state[:6])
-    return RedirectResponse(authorize_url, status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -107,13 +124,42 @@ async def callback(
 
     if error:
         logger.warning("auth.callback_idp_error", error=error)
-        return RedirectResponse(f"{frontend}/?auth_error={error}", status_code=302)
+        resp = RedirectResponse(f"{frontend}/?auth_error={error}", status_code=302)
+        _clear_oidc_state_cookie(resp, settings)
+        return resp
+
     if not code or not state:
         raise _AuthFlowError("Missing 'code' or 'state' parameter")
 
+    # Bind the response to the browser that initiated /login. The cookie was
+    # set at /login with Path=/v1/auth/callback so only that browser carries
+    # it here. Without this check, anyone relayed a (code, state) pair could
+    # have a session minted in their browser for the original user.
+    cookie_state = request.cookies.get(_OIDC_STATE_COOKIE)
+    if cookie_state is None or not secrets.compare_digest(cookie_state, state):
+        logger.warning(
+            "auth.callback_state_cookie_mismatch",
+            state_prefix=state[:6],
+            cookie_present=cookie_state is not None,
+        )
+        # Burn the Redis entry so it can't be retried by anyone, and clear the
+        # cookie so a partial relay doesn't leave a one-shot replay primitive.
+        await sessions.pop_login_state(state)
+        resp_err = JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "AUTH_FLOW_ERROR",
+                    "message": "State binding failed",
+                    "details": [],
+                }
+            },
+        )
+        _clear_oidc_state_cookie(resp_err, settings)
+        return resp_err
+
     login_state = await sessions.pop_login_state(state)
     if login_state is None:
-        # Unknown state — either replay, CSRF attempt, or browser nav-back.
         logger.warning("auth.callback_unknown_state", state_prefix=state[:6])
         raise _AuthFlowError("Unknown or expired login state")
 
@@ -154,6 +200,7 @@ async def callback(
 
     response = RedirectResponse(f"{frontend}{login_state.return_to}", status_code=302)
     _set_session_cookie(response, sid, settings)
+    _clear_oidc_state_cookie(response, settings)
     logger.info("auth.session_created", subject=principal.subject)
     return response
 
@@ -212,6 +259,30 @@ def _clear_session_cookie(response: Response, settings: Settings) -> None:
     response.delete_cookie(
         key=settings.session_cookie_name,
         path="/",
+        httponly=True,
+        secure=settings.is_prod,
+        samesite="lax",
+    )
+
+
+def _set_oidc_state_cookie(response: Response, state: str, settings: Settings) -> None:
+    response.set_cookie(
+        key=_OIDC_STATE_COOKIE,
+        value=state,
+        max_age=_OIDC_STATE_COOKIE_TTL_SECONDS,
+        httponly=True,
+        secure=settings.is_prod,
+        # 'lax' lets the cookie survive the IdP redirect back to /callback,
+        # which is a top-level GET navigation; 'strict' would block it.
+        samesite="lax",
+        path=_callback_cookie_path(),
+    )
+
+
+def _clear_oidc_state_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        key=_OIDC_STATE_COOKIE,
+        path=_callback_cookie_path(),
         httponly=True,
         secure=settings.is_prod,
         samesite="lax",
