@@ -1,11 +1,15 @@
 import { Link } from 'react-router-dom'
 import type { Task } from '../types/api'
+import { useAuth } from '../auth/AuthProvider'
+import { isOwnTask } from '../auth/access'
 import { StatusBadge } from './StatusBadge'
 
 const PRIORITY_LABEL = { low: 'Low', medium: 'Med', high: 'High' } as const
 const PRIORITY_DOT   = { low: 'bg-gray-400', medium: 'bg-yellow-400', high: 'bg-red-500' } as const
 
 export function TaskCard({ task }: { task: Task }) {
+  const { user } = useAuth()
+  const own = isOwnTask(user, task.owner_id)
   const due = task.due_at ? new Date(task.due_at) : null
   const overdue =
     due !== null &&
@@ -38,6 +42,14 @@ export function TaskCard({ task }: { task: Task }) {
             Due {due.toLocaleDateString()}
           </span>
         )}
+        <span
+          className={`ml-auto px-1.5 py-0.5 rounded text-[11px] ${
+            own ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'
+          }`}
+          title={own ? 'Your task' : `Owner ${task.owner_id}`}
+        >
+          {own ? 'You' : task.owner_id.slice(0, 8)}
+        </span>
       </div>
     </Link>
   )

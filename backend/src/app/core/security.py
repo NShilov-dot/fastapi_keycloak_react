@@ -38,8 +38,15 @@ class Principal:
 class JWKSCache:
     """Fetch JWKS from Keycloak and cache it for `ttl_seconds` (per process)."""
 
-    def __init__(self, *, issuer: str, ttl_seconds: int = 3600) -> None:
+    def __init__(
+        self, *, issuer: str, jwks_uri: str | None = None, ttl_seconds: int = 3600
+    ) -> None:
+        # `issuer` is the EXPECTED token `iss` (the public/frontchannel value Keycloak
+        # stamps into tokens). `jwks_uri` is where to FETCH the keys from — the internal
+        # backchannel URL when those differ (Keycloak behind docker/ingress). They
+        # coincide in single-URL deployments.
         self._issuer = issuer.rstrip("/")
+        self._jwks_uri = jwks_uri or f"{self._issuer}/protocol/openid-connect/certs"
         self._ttl = ttl_seconds
         self._jwks: dict[str, Any] | None = None
         self._expires_at = 0.0
@@ -64,8 +71,7 @@ class JWKSCache:
                 and time.monotonic() < self._expires_at
             ):
                 return self._jwks
-            url = f"{self._issuer}/protocol/openid-connect/certs"
-            response = await self._client.get(url)
+            response = await self._client.get(self._jwks_uri)
             response.raise_for_status()
             self._jwks = response.json()
             self._expires_at = time.monotonic() + self._ttl
@@ -157,7 +163,10 @@ async def verify_token(
             },
         )
     except JWTError as exc:
-        raise _fail(f"token_decode_failed:{type(exc).__name__}") from exc
+        # Log the jose detail (generic message, e.g. "Signature verification failed" /
+        # "Invalid audience") to aid debugging; keep the client-facing reason generic.
+        logger.warning("auth.token_rejected", reason="token_decode_failed", detail=str(exc))
+        raise AuthError("token_decode_failed") from exc
 
     # Token-type check on the verified PAYLOAD claim (not the JOSE header).
     if expected_token_types and claims.get("typ") not in expected_token_types:

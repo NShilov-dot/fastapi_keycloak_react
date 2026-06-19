@@ -1,9 +1,8 @@
 """Service-level tests with an in-memory fake repository.
 
-Verifies cross-cutting behaviours that the domain entity alone can't:
-- ownership enforcement (other-owner reads return 404, not 403)
-- partial update wiring (`*_set` flags from the request shape)
-- transitions go through the repo
+Visibility model: reads are org-wide (any member sees every task in the org);
+writes (update/transition/delete) are restricted to the owner OR an admin
+(`can_manage_any`).
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from app.modules.tasks.application.dtos import (
 )
 from app.modules.tasks.application.services import TaskService
 from app.modules.tasks.domain.entities import Task, TaskPriority, TaskStatus
-from app.modules.tasks.domain.errors import TaskNotFoundError
+from app.modules.tasks.domain.errors import TaskAccessDeniedError, TaskNotFoundError
 
 
 class FakeRepo:
@@ -33,15 +32,17 @@ class FakeRepo:
     async def get_by_id(self, task_id: UUID) -> Task | None:
         return self._by_id.get(task_id)
 
-    async def list_for_owner(
+    async def list_tasks(
         self,
         *,
-        owner_id: UUID,
+        owner_id: UUID | None,
         status: TaskStatus | None,
         limit: int,
         offset: int,
     ) -> tuple[list[Task], int]:
-        rows = [t for t in self._by_id.values() if t.owner_id == owner_id]
+        rows = list(self._by_id.values())
+        if owner_id is not None:
+            rows = [t for t in rows if t.owner_id == owner_id]
         if status is not None:
             rows = [t for t in rows if t.status == status]
         rows.sort(key=lambda t: t.created_at, reverse=True)
@@ -68,45 +69,71 @@ def service(repo: FakeRepo) -> TaskService:
 @pytest.mark.asyncio
 async def test_create_persists(service: TaskService, repo: FakeRepo) -> None:
     owner = uuid4()
-    task = await service.create(
-        owner_id=owner, command=CreateTaskCommand(title="ship")
-    )
+    task = await service.create(owner_id=owner, command=CreateTaskCommand(title="ship"))
     assert await repo.get_by_id(task.id) is not None
     assert task.owner_id == owner
 
 
+# ---------------------------------------------------------------------------
+# Reads are org-wide
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_other_owners_task_is_404_not_403(service: TaskService) -> None:
+async def test_get_is_org_wide(service: TaskService) -> None:
     alice, bob = uuid4(), uuid4()
     task = await service.create(owner_id=alice, command=CreateTaskCommand(title="x"))
-    with pytest.raises(TaskNotFoundError):
-        await service.get(owner_id=bob, task_id=task.id)
+    # Bob (a different member of the same org) can READ Alice's task.
+    got = await service.get(task_id=task.id)
+    assert got.id == task.id and got.owner_id == alice
+    _ = bob  # both are org members; ownership doesn't gate reads
 
 
 @pytest.mark.asyncio
-async def test_list_filters_by_owner_and_status(service: TaskService) -> None:
+async def test_get_missing_is_404(service: TaskService) -> None:
+    with pytest.raises(TaskNotFoundError):
+        await service.get(task_id=uuid4())
+
+
+@pytest.mark.asyncio
+async def test_list_is_org_wide_by_default_and_filterable_to_mine(service: TaskService) -> None:
+    alice, bob = uuid4(), uuid4()
+    await service.create(owner_id=alice, command=CreateTaskCommand(title="a"))
+    await service.create(owner_id=bob, command=CreateTaskCommand(title="b"))
+
+    everyone = await service.list(query=ListTasksQuery())
+    assert everyone.total == 2  # all org tasks
+
+    mine = await service.list(query=ListTasksQuery(), owner_id=alice)
+    assert mine.total == 1 and mine.items[0].owner_id == alice
+
+
+@pytest.mark.asyncio
+async def test_list_status_filter(service: TaskService) -> None:
     alice = uuid4()
     t1 = await service.create(owner_id=alice, command=CreateTaskCommand(title="a"))
     await service.create(owner_id=alice, command=CreateTaskCommand(title="b"))
-    await service.complete(owner_id=alice, task_id=t1.id)
+    await service.complete(task_id=t1.id, actor_id=alice, can_manage_any=False)
 
-    page = await service.list(
-        owner_id=alice, query=ListTasksQuery(status=TaskStatus.OPEN)
-    )
-    assert page.total == 1
-    assert page.items[0].status is TaskStatus.OPEN
+    page = await service.list(query=ListTasksQuery(status=TaskStatus.OPEN))
+    assert page.total == 1 and page.items[0].status is TaskStatus.OPEN
+
+
+# ---------------------------------------------------------------------------
+# Writes: owner or admin only
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_update_clear_description(service: TaskService) -> None:
+async def test_owner_can_update(service: TaskService) -> None:
     alice = uuid4()
     task = await service.create(
-        owner_id=alice,
-        command=CreateTaskCommand(title="x", description="initial"),
+        owner_id=alice, command=CreateTaskCommand(title="x", description="initial")
     )
     updated = await service.update(
-        owner_id=alice,
         task_id=task.id,
+        actor_id=alice,
+        can_manage_any=False,
         command=UpdateTaskCommand(description=None, description_set=True),
     )
     assert updated.description is None
@@ -116,22 +143,42 @@ async def test_update_clear_description(service: TaskService) -> None:
 async def test_update_preserves_description_when_not_set(service: TaskService) -> None:
     alice = uuid4()
     task = await service.create(
-        owner_id=alice,
-        command=CreateTaskCommand(title="x", description="keep"),
+        owner_id=alice, command=CreateTaskCommand(title="x", description="keep")
     )
     updated = await service.update(
-        owner_id=alice,
         task_id=task.id,
+        actor_id=alice,
+        can_manage_any=False,
         command=UpdateTaskCommand(priority=TaskPriority.HIGH),
     )
-    assert updated.description == "keep"
-    assert updated.priority is TaskPriority.HIGH
+    assert updated.description == "keep" and updated.priority is TaskPriority.HIGH
 
 
 @pytest.mark.asyncio
-async def test_delete_requires_ownership(service: TaskService, repo: FakeRepo) -> None:
+async def test_non_owner_cannot_modify_or_delete(service: TaskService, repo: FakeRepo) -> None:
     alice, bob = uuid4(), uuid4()
     task = await service.create(owner_id=alice, command=CreateTaskCommand(title="x"))
+    with pytest.raises(TaskAccessDeniedError):
+        await service.update(
+            task_id=task.id, actor_id=bob, can_manage_any=False,
+            command=UpdateTaskCommand(title="hijack"),
+        )
+    with pytest.raises(TaskAccessDeniedError):
+        await service.delete(task_id=task.id, actor_id=bob, can_manage_any=False)
+    assert await repo.get_by_id(task.id) is not None  # untouched
+
+
+@pytest.mark.asyncio
+async def test_admin_can_manage_any_task(service: TaskService, repo: FakeRepo) -> None:
+    alice, admin = uuid4(), uuid4()
+    task = await service.create(owner_id=alice, command=CreateTaskCommand(title="x"))
+    # tenant_admin (can_manage_any=True) may complete and delete another's task.
+    await service.complete(task_id=task.id, actor_id=admin, can_manage_any=True)
+    await service.delete(task_id=task.id, actor_id=admin, can_manage_any=True)
+    assert await repo.get_by_id(task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_write_on_missing_task_is_404(service: TaskService) -> None:
     with pytest.raises(TaskNotFoundError):
-        await service.delete(owner_id=bob, task_id=task.id)
-    assert await repo.get_by_id(task.id) is not None
+        await service.delete(task_id=uuid4(), actor_id=uuid4(), can_manage_any=True)

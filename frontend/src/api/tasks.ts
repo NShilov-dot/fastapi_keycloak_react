@@ -5,6 +5,8 @@ export interface ListTasksParams {
   status?: TaskStatus
   limit?: number
   offset?: number
+  /** Only the current user's own tasks (default: all tasks in the organization). */
+  mine?: boolean
 }
 
 export interface CreateTaskInput {
@@ -27,6 +29,7 @@ export const tasksApi = {
     if (params.status)              qs.set('status', params.status)
     if (params.limit !== undefined) qs.set('limit',  String(params.limit))
     if (params.offset !== undefined) qs.set('offset', String(params.offset))
+    if (params.mine)                qs.set('mine',   'true')
     const q = qs.toString() ? `?${qs}` : ''
     return api.get<PagedEnvelope<Task>>(`/v1/tasks${q}`)
   },

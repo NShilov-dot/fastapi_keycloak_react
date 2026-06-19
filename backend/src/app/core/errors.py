@@ -47,3 +47,8 @@ class RateLimitError(DomainError):
 class CsrfError(DomainError):
     code = "CSRF_FAILED"
     http_status = 403
+
+
+class ConflictError(DomainError):
+    code = "CONFLICT"
+    http_status = 409

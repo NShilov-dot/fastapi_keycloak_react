@@ -238,6 +238,57 @@ async def test_find_users_passes_params() -> None:
     assert "alice%40example.com" in get_call or "email" in get_call
 
 
+@pytest.mark.asyncio
+async def test_create_user_returns_id_from_location() -> None:
+    uid = "user-xyz"
+    route = _Route(
+        "POST",
+        f"{_ADMIN_BASE_PART}/users",
+        201,
+        json={},
+        headers={"Location": f"http://keycloak:8080/admin/realms/saas/users/{uid}"},
+    )
+    kc, _ = _client(route)
+    result = await kc.create_user(
+        username="bob@example.com",
+        email="bob@example.com",
+        attributes={"tenant_id": ["t-1"]},
+    )
+    assert result == uid
+    assert route.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_assign_realm_role_looks_up_then_posts() -> None:
+    get_role = _Route(
+        "GET", f"{_ADMIN_BASE_PART}/roles/tenant_user", 200, json={"id": "r1", "name": "tenant_user"}
+    )
+    post_map = _Route("POST", f"{_ADMIN_BASE_PART}/users/u1/role-mappings/realm", 204)
+    kc, _ = _client(get_role, post_map)
+    await kc.assign_realm_role("u1", "tenant_user")
+    assert get_role.calls == 1 and post_map.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_send_execute_actions_email() -> None:
+    route = _Route("PUT", f"{_ADMIN_BASE_PART}/users/u1/execute-actions-email", 204)
+    kc, transport = _client(route)
+    await kc.send_execute_actions_email(
+        "u1", ["UPDATE_PASSWORD", "VERIFY_EMAIL"], client_id="saas-backend"
+    )
+    assert route.calls == 1
+    put_call = next(c for c in transport.all_calls if "execute-actions-email" in c)
+    assert "client_id=saas-backend" in put_call
+
+
+@pytest.mark.asyncio
+async def test_delete_user() -> None:
+    route = _Route("DELETE", f"{_ADMIN_BASE_PART}/users/u1", 204)
+    kc, _ = _client(route)
+    await kc.delete_user("u1")
+    assert route.calls == 1
+
+
 # ---------------------------------------------------------------------------
 # TenantGroupSpec helper
 # ---------------------------------------------------------------------------

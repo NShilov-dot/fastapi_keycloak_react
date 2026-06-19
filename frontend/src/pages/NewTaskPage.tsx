@@ -8,9 +8,9 @@ export default function NewTaskPage() {
   const navigate    = useNavigate()
   const queryClient = useQueryClient()
 
-  const [title,       setTitle]       = useState('')
+  const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [priority,    setPriority]    = useState<TaskPriority>('medium')
+  const [priority, setPriority] = useState<TaskPriority>('medium')
   const [dueAt,       setDueAt]       = useState('')
 
   const { mutate, isPending, isError } = useMutation({

@@ -8,7 +8,12 @@ from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings, get_settings
-from app.core.errors import CsrfError, RateLimitError, ServiceUnavailableError
+from app.core.errors import (
+    CsrfError,
+    PermissionDeniedError,
+    RateLimitError,
+    ServiceUnavailableError,
+)
 from app.core.keycloak_admin import KeycloakAdminClient
 from app.core.oidc import OIDCClient, OIDCError
 from app.core.rate_limit import RateLimiterDep
@@ -171,7 +176,8 @@ def require_roles(*roles: str):
     async def _checker(principal: PrincipalDep) -> Principal:
         missing = required - principal.roles
         if missing:
-            raise AuthError(f"Missing required roles: {sorted(missing)}")
+            # Authenticated but lacking the role → 403 (not 401).
+            raise PermissionDeniedError(f"Missing required roles: {sorted(missing)}")
         return principal
 
     return _checker

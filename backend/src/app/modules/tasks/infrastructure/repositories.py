@@ -62,16 +62,22 @@ class SqlAlchemyTaskRepository:
         row = await self._session.get(TaskRow, task_id)
         return _to_entity(row) if row is not None else None
 
-    async def list_for_owner(
+    async def list_tasks(
         self,
         *,
-        owner_id: UUID,
+        owner_id: UUID | None,
         status: TaskStatus | None,
         limit: int,
         offset: int,
     ) -> tuple[list[Task], int]:
-        base = select(TaskRow).where(TaskRow.owner_id == owner_id)
-        count_q = select(func.count()).select_from(TaskRow).where(TaskRow.owner_id == owner_id)
+        # Tenant isolation is enforced by the per-request schema search_path, so
+        # "all tasks" here means all tasks of the current organization. owner_id
+        # narrows to one member's tasks (the "my tasks" view).
+        base = select(TaskRow)
+        count_q = select(func.count()).select_from(TaskRow)
+        if owner_id is not None:
+            base = base.where(TaskRow.owner_id == owner_id)
+            count_q = count_q.where(TaskRow.owner_id == owner_id)
         if status is not None:
             base = base.where(TaskRow.status == status.value)
             count_q = count_q.where(TaskRow.status == status.value)

@@ -98,6 +98,11 @@ async def _run_async_migrations() -> None:
     )
     async with connectable.connect() as connection:
         await connection.run_sync(_do_run_migrations)
+        # Commit explicitly: the pre-migration CREATE SCHEMA / SET search_path opens
+        # the connection's transaction before Alembic's begin_transaction, so Alembic
+        # treats it as caller-owned and does NOT commit — without this the DDL is
+        # rolled back on close (async SQLAlchemy 2.0 commit-as-you-go).
+        await connection.commit()
     await connectable.dispose()
 
 

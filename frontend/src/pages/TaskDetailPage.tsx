@@ -2,6 +2,8 @@ import { useNavigate, useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import type { TaskStatus } from '../types/api'
+import { useAuth } from '../auth/AuthProvider'
+import { canManageTask, isOwnTask } from '../auth/access'
 import { StatusBadge } from '../components/StatusBadge'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 
@@ -34,6 +36,7 @@ export default function TaskDetailPage() {
   const { id }      = useParams<{ id: string }>()
   const navigate    = useNavigate()
   const qc          = useQueryClient()
+  const { user }    = useAuth()
 
   const { data, isLoading } = useQuery({
     queryKey: ['tasks', id],
@@ -63,6 +66,8 @@ export default function TaskDetailPage() {
   if (!task) return <p className="text-gray-500 py-8">Task not found.</p>
 
   const s = task.status as TaskStatus
+  const own = isOwnTask(user, task.owner_id)
+  const canManage = canManageTask(user, task.owner_id)
 
   return (
     <div className="max-w-lg">
@@ -86,6 +91,13 @@ export default function TaskDetailPage() {
 
         {/* Meta grid */}
         <dl className="grid grid-cols-2 gap-y-3 text-sm mb-6">
+          <div>
+            <dt className="text-gray-400 text-xs uppercase tracking-wide mb-0.5">Owner</dt>
+            <dd className="text-gray-900 font-medium" title={task.owner_id}>
+              {own ? 'You' : task.owner_id.slice(0, 8)}
+            </dd>
+          </div>
+
           <div>
             <dt className="text-gray-400 text-xs uppercase tracking-wide mb-0.5">Priority</dt>
             <dd className="text-gray-900 font-medium">{PRIORITY_LABEL[task.priority]}</dd>
@@ -111,26 +123,32 @@ export default function TaskDetailPage() {
           </div>
         </dl>
 
-        {/* Action buttons */}
-        <div className="flex flex-wrap gap-2 pt-4 border-t border-gray-100">
-          {s === 'open' && (
-            <Btn label="Start" onClick={() => startM.mutate()} disabled={busy} />
-          )}
-          {(s === 'open' || s === 'in_progress') && (
-            <Btn label="Complete" onClick={() => completeM.mutate()} disabled={busy} />
-          )}
-          {(s === 'open' || s === 'in_progress') && (
-            <Btn label="Cancel" onClick={() => cancelM.mutate()} disabled={busy} />
-          )}
-          <Btn
-            label="Delete"
-            variant="danger"
-            disabled={busy}
-            onClick={() => {
-              if (window.confirm('Delete this task?')) deleteM.mutate()
-            }}
-          />
-        </div>
+        {/* Action buttons — only the owner (or a tenant admin) can modify a task */}
+        {canManage ? (
+          <div className="flex flex-wrap gap-2 pt-4 border-t border-gray-100">
+            {s === 'open' && (
+              <Btn label="Start" onClick={() => startM.mutate()} disabled={busy} />
+            )}
+            {(s === 'open' || s === 'in_progress') && (
+              <Btn label="Complete" onClick={() => completeM.mutate()} disabled={busy} />
+            )}
+            {(s === 'open' || s === 'in_progress') && (
+              <Btn label="Cancel" onClick={() => cancelM.mutate()} disabled={busy} />
+            )}
+            <Btn
+              label="Delete"
+              variant="danger"
+              disabled={busy}
+              onClick={() => {
+                if (window.confirm('Delete this task?')) deleteM.mutate()
+              }}
+            />
+          </div>
+        ) : (
+          <p className="pt-4 border-t border-gray-100 text-sm text-gray-400">
+            Read-only — this task belongs to another member of your organization.
+          </p>
+        )}
 
         {mutErr && (
           <p className="text-red-600 text-sm mt-3">Action failed. Please try again.</p>

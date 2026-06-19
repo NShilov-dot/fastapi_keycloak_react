@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -142,7 +142,7 @@ class KeycloakAdminClient:
         if attributes:
             payload["attributes"] = attributes
         resp = await self._request("POST", "/groups", json=payload, expect={201})
-        location = resp.headers.get("Location", "")
+        location: str = resp.headers.get("Location", "")
         group_id = location.rsplit("/", 1)[-1]
         logger.info(
             "keycloak_admin.group_created",
@@ -209,6 +209,87 @@ class KeycloakAdminClient:
             params["email"] = email
         resp = await self._request("GET", "/users", params=params)
         return resp.json()  # type: ignore[no-any-return]
+
+    async def create_user(
+        self,
+        *,
+        username: str,
+        email: str,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        attributes: dict[str, list[str]] | None = None,
+        required_actions: list[str] | None = None,
+        enabled: bool = True,
+        email_verified: bool = False,
+    ) -> str:
+        """Create a realm user and return its Keycloak UUID.
+
+        Note: custom attributes (e.g. tenant_id) are only persisted if the realm's
+        user profile declares them or allows unmanaged attributes — see
+        realm-export.json (unmanagedAttributePolicy).
+        """
+        payload: dict[str, Any] = {
+            "username": username,
+            "email": email,
+            "enabled": enabled,
+            "emailVerified": email_verified,
+        }
+        if first_name is not None:
+            payload["firstName"] = first_name
+        if last_name is not None:
+            payload["lastName"] = last_name
+        if attributes:
+            payload["attributes"] = attributes
+        if required_actions:
+            payload["requiredActions"] = required_actions
+        resp = await self._request("POST", "/users", json=payload, expect={201})
+        location: str = resp.headers.get("Location", "")
+        user_id = location.rsplit("/", 1)[-1]
+        logger.info("keycloak_admin.user_created", realm=self._realm, user_id=user_id)
+        return user_id
+
+    async def delete_user(self, user_id: str) -> None:
+        """Delete a user by ID (used to compensate a failed provisioning step)."""
+        await self._request("DELETE", f"/users/{user_id}", expect={204})
+
+    async def assign_realm_role(self, user_id: str, role_name: str) -> None:
+        """Grant a realm role to a user."""
+        role = (await self._request("GET", f"/roles/{role_name}")).json()
+        await self._request(
+            "POST",
+            f"/users/{user_id}/role-mappings/realm",
+            json=[{"id": role["id"], "name": role["name"]}],
+            expect={204},
+        )
+
+    async def send_execute_actions_email(
+        self,
+        user_id: str,
+        actions: list[str],
+        *,
+        client_id: str | None = None,
+        redirect_uri: str | None = None,
+        lifespan_seconds: int | None = None,
+    ) -> None:
+        """Email the user a link to perform required actions (e.g. set password).
+
+        Common actions: "UPDATE_PASSWORD", "VERIFY_EMAIL". Requires SMTP configured
+        on the realm; otherwise Keycloak returns an error.
+        """
+        params: dict[str, str] = {}
+        if client_id is not None:
+            params["client_id"] = client_id
+        if redirect_uri is not None:
+            params["redirect_uri"] = redirect_uri
+        if lifespan_seconds is not None:
+            params["lifespan"] = str(lifespan_seconds)
+        await self._request(
+            "PUT",
+            f"/users/{user_id}/execute-actions-email",
+            json=actions,
+            params=params or None,
+            expect={204},
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle

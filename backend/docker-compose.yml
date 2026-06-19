@@ -8,7 +8,9 @@ services:
       POSTGRES_PASSWORD: app
       POSTGRES_DB: app
     ports:
-      - "5432:5432"
+      # Host 5433 to avoid colliding with other local Postgres instances; the app
+      # reaches this DB over the docker network (postgres:5432), not the host port.
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -63,7 +65,9 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      # Host 6380 to avoid colliding with other local Redis instances; the app
+      # reaches it over the docker network (redis:6379), not the host port.
+      - "6380:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -77,13 +81,23 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: dev
-    env_file: .env
+    # Single source of truth is the project-root .env (see Makefile). These
+    # environment entries override the host-facing URLs with docker-network names.
+    env_file: ../.env
     environment:
       DATABASE_URL: postgresql+asyncpg://app:app@postgres:5432/app
       REDIS_URL: redis://redis:6379/0
+      # Backchannel issuer (server -> Keycloak) uses the compose-network name…
       KEYCLOAK_ISSUER: http://keycloak:8080/realms/saas
+      # …while the browser-facing issuer (authorize/end_session + token `iss`) and
+      # the BFF public base point at the single nginx origin / published Keycloak port.
+      KEYCLOAK_PUBLIC_ISSUER: http://localhost:8080/realms/saas
+      PUBLIC_BASE_URL: http://localhost:3000
+      FRONTEND_BASE_URL: http://localhost:3000
     ports:
-      - "8000:8000"
+      # Host 8001 to avoid colliding with other local APIs; the browser reaches the
+      # backend through nginx (:3000 -> app:8000 internal), not this host port.
+      - "8001:8000"
     volumes:
       - ./src:/app/src
       - ./alembic:/app/alembic

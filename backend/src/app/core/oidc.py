@@ -76,16 +76,23 @@ class OIDCClient:
         self,
         *,
         issuer: str,
+        public_issuer: str | None = None,
         client_id: str,
         client_secret: str,
         http_timeout: float = 10.0,
         _http: httpx.AsyncClient | None = None,
     ) -> None:
-        issuer = issuer.rstrip("/")
+        issuer = issuer.rstrip("/")                       # backchannel (server -> Keycloak)
+        public = (public_issuer or issuer).rstrip("/")    # frontchannel (browser -> Keycloak)
         self._issuer = issuer
+        self._public_issuer = public
         self._client_id = client_id
         self._client_secret = client_secret
-        self._authorize_url = f"{issuer}/protocol/openid-connect/auth"
+        # Browser-facing endpoints use the public issuer so the redirect targets are
+        # reachable from the user's browser (not the docker-internal hostname).
+        self._authorize_url       = f"{public}/protocol/openid-connect/auth"
+        self._public_logout_url   = f"{public}/protocol/openid-connect/logout"
+        # Backchannel endpoints use the internal issuer.
         self._token_url     = f"{issuer}/protocol/openid-connect/token"
         self._userinfo_url  = f"{issuer}/protocol/openid-connect/userinfo"
         self._logout_url    = f"{issuer}/protocol/openid-connect/logout"
@@ -101,7 +108,11 @@ class OIDCClient:
         redirect_uri: str,
         state: str,
         pkce_challenge: str,
-        scope: str = "openid profile email",
+        # Only the mandatory OIDC marker is requested explicitly. The client's
+        # DEFAULT scopes (profile, email, roles, tenant, …) are applied by Keycloak
+        # automatically, so we don't name them here — naming a scope the realm
+        # doesn't define as an assignable client scope triggers invalid_scope.
+        scope: str = "openid",
     ) -> str:
         params = {
             "response_type":         "code",
@@ -120,7 +131,8 @@ class OIDCClient:
         if id_token_hint:
             params["id_token_hint"] = id_token_hint
         params["client_id"] = self._client_id
-        return f"{self._logout_url}?{urlencode(params)}"
+        # Browser-facing end_session endpoint → public issuer.
+        return f"{self._public_logout_url}?{urlencode(params)}"
 
     async def exchange_code(
         self, *, code: str, redirect_uri: str, pkce_verifier: str

@@ -18,13 +18,15 @@ const PAGE_SIZE = 20
 
 export default function TasksPage() {
   const [filter, setFilter] = useState<TaskStatus | ''>('')
+  const [scope, setScope] = useState<'all' | 'mine'>('all')
   const [page, setPage] = useState(0)
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['tasks', filter, page],
+    queryKey: ['tasks', filter, scope, page],
     queryFn: () =>
       tasksApi.list({
         status: filter || undefined,
+        mine:   scope === 'mine',
         limit:  PAGE_SIZE,
         offset: page * PAGE_SIZE,
       }),
@@ -50,6 +52,21 @@ export default function TasksPage() {
         >
           + New Task
         </Link>
+      </div>
+
+      {/* Scope: all org tasks vs only mine */}
+      <div className="flex gap-1 mb-3">
+        {(['all', 'mine'] as const).map((sc) => (
+          <button
+            key={sc}
+            onClick={() => { setScope(sc); setPage(0) }}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              scope === sc ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            {sc === 'all' ? 'All (organization)' : 'My tasks'}
+          </button>
+        ))}
       </div>
 
       {/* Status tabs */}

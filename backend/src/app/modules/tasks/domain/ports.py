@@ -13,15 +13,17 @@ class TaskRepository(Protocol):
 
     async def get_by_id(self, task_id: UUID) -> Task | None: ...
 
-    async def list_for_owner(
+    async def list_tasks(
         self,
         *,
-        owner_id: UUID,
+        owner_id: UUID | None,
         status: TaskStatus | None,
         limit: int,
         offset: int,
-    ) -> tuple[list[Task], int]: ...
+    ) -> tuple[list[Task], int]:
+        """List tasks in the current tenant. owner_id=None → all org tasks."""
+        ...
 
-    async def update(self, task: Task) -> None: ...
+    async def update(self, task: Task) -> Task: ...
 
     async def delete(self, task_id: UUID) -> None: ...

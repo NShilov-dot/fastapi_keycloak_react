@@ -12,6 +12,11 @@ class TaskValidationError(DomainError):
     http_status = 422
 
 
+class TaskAccessDeniedError(DomainError):
+    code = "TASK_ACCESS_DENIED"
+    http_status = 403
+
+
 class TaskTransitionError(DomainError):
     code = "TASK_TRANSITION_FORBIDDEN"
     http_status = 409

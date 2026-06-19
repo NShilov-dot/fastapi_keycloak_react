@@ -18,9 +18,12 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.4 /uv /usr/local/bin/uv
 FROM base AS builder
 WORKDIR /app
 COPY pyproject.toml ./
+# NB: two steps (compile -> file -> install) instead of `-r <(... )`. Docker RUN
+# uses /bin/sh (dash), which has no process substitution, so `<(...)` errors out.
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv /opt/venv \
-    && uv pip install --python /opt/venv/bin/python -r <(uv pip compile pyproject.toml --quiet)
+    && uv pip compile pyproject.toml --quiet -o /tmp/requirements.txt \
+    && uv pip install --python /opt/venv/bin/python -r /tmp/requirements.txt
 
 
 FROM base AS dev
@@ -29,8 +32,12 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONPATH="/app/src"
 COPY pyproject.toml ./
+# Dependency-groups (PEP 735) are a uv *project* concept; `uv pip install --group`
+# does not exist. Export the dev group to a requirements file, then pip-install it.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --python /opt/venv/bin/python --group dev
+    uv export --only-group dev --format requirements-txt --no-emit-project --no-hashes \
+      -o /tmp/dev-requirements.txt \
+    && uv pip install --python /opt/venv/bin/python -r /tmp/dev-requirements.txt
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini

@@ -32,8 +32,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Fail fast on bad production configuration before accepting traffic
     settings.validate_for_production()
 
+    # Expected token `iss` is the public issuer; JWKS is fetched over the internal
+    # (backchannel) URL — they differ when Keycloak is behind docker/ingress.
+    internal_issuer = str(settings.keycloak_issuer).rstrip("/")
     app.state.jwks = JWKSCache(
-        issuer=str(settings.keycloak_issuer),
+        issuer=settings.keycloak_public_issuer_effective,
+        jwks_uri=f"{internal_issuer}/protocol/openid-connect/certs",
         ttl_seconds=settings.keycloak_jwks_cache_ttl,
     )
 
@@ -55,6 +59,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.oidc = OIDCClient(
         issuer=str(settings.keycloak_issuer),
+        public_issuer=settings.keycloak_public_issuer_effective,
         client_id=settings.oidc_client_id,
         client_secret=settings.oidc_client_secret.get_secret_value(),
     )

@@ -66,6 +66,7 @@ def _token(priv: str, **claim_overrides: object) -> str:
 def _jwks_cache(jwks: dict) -> JWKSCache:
     cache = JWKSCache.__new__(JWKSCache)
     cache._issuer = _ISSUER  # type: ignore[attr-defined]
+    cache._jwks_uri = f"{_ISSUER}/protocol/openid-connect/certs"  # type: ignore[attr-defined]
     cache._jwks = jwks  # type: ignore[attr-defined]
     cache._expires_at = time.monotonic() + 3600  # type: ignore[attr-defined]
     return cache

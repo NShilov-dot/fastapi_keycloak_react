@@ -53,7 +53,14 @@ class Settings(BaseSettings):
     # store cannot disable limits (and vice-versa). Falls back to redis_url.
     rate_limit_redis_url: RedisDsn | None = None
 
+    # Internal (backchannel) issuer — used by the backend to reach Keycloak for
+    # token exchange, userinfo, refresh-token revoke, and JWKS fetch. In docker this
+    # is the compose-network name (http://keycloak:8080/realms/saas).
     keycloak_issuer: AnyHttpUrl
+    # Public (frontchannel) issuer — the URL the BROWSER uses for the authorize and
+    # end_session redirects, and the `iss` value tokens are stamped with (Keycloak's
+    # KC_HOSTNAME). Defaults to keycloak_issuer when unset (single-URL deployments).
+    keycloak_public_issuer: AnyHttpUrl | None = None
     keycloak_audience: str
     keycloak_jwks_cache_ttl: int = 3600
     keycloak_tenant_claim: str = "tenant_id"
@@ -128,6 +135,11 @@ class Settings(BaseSettings):
         return bool(self.keycloak_admin_client_secret.get_secret_value())
 
     @property
+    def keycloak_public_issuer_effective(self) -> str:
+        """Browser-facing issuer; falls back to the internal one when unset."""
+        return str(self.keycloak_public_issuer or self.keycloak_issuer)
+
+    @property
     def cookies_secure(self) -> bool:
         """Set the Secure cookie flag whenever the backend is served over HTTPS.
 
@@ -182,6 +194,8 @@ class Settings(BaseSettings):
             errors.append("CORS_ORIGINS must be set in production")
         if str(self.keycloak_issuer).startswith("http://"):
             errors.append("KEYCLOAK_ISSUER must use HTTPS in production")
+        if self.keycloak_public_issuer and str(self.keycloak_public_issuer).startswith("http://"):
+            errors.append("KEYCLOAK_PUBLIC_ISSUER must use HTTPS in production")
         if str(self.public_base_url).startswith("http://"):
             errors.append("PUBLIC_BASE_URL must use HTTPS in production")
         if str(self.frontend_base_url).startswith("http://"):
