@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.errors import (
     ConflictError,
     DomainError,
+    PermissionDeniedError,
     ServiceUnavailableError,
     TenantResolutionError,
 )
@@ -34,6 +35,9 @@ _SLUG_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
 # Required actions stamped on every new member so they must set a password (and
 # verify email) on first login — independent of whether the invite email sends.
 _MEMBER_REQUIRED_ACTIONS = ["UPDATE_PASSWORD", "VERIFY_EMAIL"]
+# Roles a tenant invite may grant. Defence-in-depth alongside the interface-layer
+# Literal: never let a tenant_admin mint a platform_admin, even via a future caller.
+_TENANT_GRANTABLE_ROLES = frozenset({"tenant_user", "tenant_admin"})
 
 SchemaMigrator = Callable[[str], Awaitable[None]]
 
@@ -166,6 +170,9 @@ class TenantProvisioningService:
     async def invite_member(
         self, *, tenant_id: UUID, email: str, roles: Sequence[str] = ("tenant_user",)
     ) -> MemberInvited:
+        disallowed = set(roles) - _TENANT_GRANTABLE_ROLES
+        if disallowed:
+            raise PermissionDeniedError(f"Cannot grant roles: {sorted(disallowed)}")
         async with self._sm() as session:
             row = (
                 await session.execute(
@@ -196,14 +203,23 @@ class TenantProvisioningService:
     async def _provision_member(
         self, *, tenant_id: UUID, group_id: str, email: str, roles: Sequence[str]
     ) -> str:
-        user_id = await self._kc.create_user(
-            username=email,
-            email=email,
-            attributes={"tenant_id": [str(tenant_id)]},
-            required_actions=list(_MEMBER_REQUIRED_ACTIONS),
-            enabled=True,
-            email_verified=False,
-        )
+        try:
+            user_id = await self._kc.create_user(
+                username=email,
+                email=email,
+                attributes={"tenant_id": [str(tenant_id)]},
+                required_actions=list(_MEMBER_REQUIRED_ACTIONS),
+                enabled=True,
+                email_verified=False,
+            )
+        except KeycloakAdminError as exc:
+            # 409 = email/username already taken (realm-wide; duplicateEmails off).
+            # Map to a clean 409 instead of a generic 500. Keep the message generic
+            # so it doesn't confirm WHICH tenant the existing user belongs to.
+            if exc.status_code == 409:
+                raise ConflictError("A user with this email already exists") from exc
+            raise
+
         try:
             await self._kc.add_user_to_group(user_id, group_id)
             for role in roles:
@@ -214,15 +230,14 @@ class TenantProvisioningService:
             raise
 
         # The required actions are already on the user; the email is just delivery,
-        # so a missing SMTP config (common in local dev) must not fail provisioning.
+        # so a missing SMTP config OR a transient transport error (httpx.HTTPError,
+        # which is NOT a KeycloakAdminError) must not fail provisioning / orphan it.
         try:
             await self._kc.send_execute_actions_email(
                 user_id, list(_MEMBER_REQUIRED_ACTIONS), client_id=self._invite_client_id
             )
-        except KeycloakAdminError as exc:
-            logger.warning(
-                "tenant.invite_email_failed", user_id=user_id, status=exc.status_code
-            )
+        except Exception as exc:
+            logger.warning("tenant.invite_email_failed", user_id=user_id, error=str(exc))
         return user_id
 
     async def _safe_delete_user(self, user_id: str) -> None:

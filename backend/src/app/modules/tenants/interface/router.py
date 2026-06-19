@@ -22,6 +22,7 @@ from app.core.deps import (
     PrincipalDep,
     SettingsDep,
     check_csrf,
+    check_rate_limit,
     require_roles,
 )
 from app.modules.tenants.application.services import TenantProvisioningService
@@ -33,7 +34,14 @@ from app.modules.tenants.interface.schemas import (
     TenantCreatedResponse,
 )
 
-router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(check_csrf)])
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin"],
+    # check_rate_limit throttles per-user (and per-tenant) — admin endpoints create
+    # Keycloak users / send emails, so they must not be unbounded. check_csrf adds
+    # the Origin/Referer allowlist on these writes.
+    dependencies=[Depends(check_rate_limit), Depends(check_csrf)],
+)
 
 
 def _provisioning_service(

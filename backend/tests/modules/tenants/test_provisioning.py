@@ -10,7 +10,12 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.errors import ConflictError, ServiceUnavailableError, TenantResolutionError
+from app.core.errors import (
+    ConflictError,
+    PermissionDeniedError,
+    ServiceUnavailableError,
+    TenantResolutionError,
+)
 from app.core.keycloak_admin import KeycloakAdminClient, KeycloakAdminError
 from app.modules.tenants.application.services import (
     InvalidSlugError,
@@ -25,6 +30,7 @@ class _FakeKC:
         self.user_id = "usr-1"
         self.fail_assign_role = False
         self.fail_email = False
+        self.create_conflict = False
         self.deleted: list[str] = []
         self.deleted_groups: list[str] = []
 
@@ -37,6 +43,8 @@ class _FakeKC:
 
     async def create_user(self, **kw: Any) -> str:
         self.calls.append(("create_user", kw))
+        if self.create_conflict:
+            raise KeycloakAdminError(409, "User exists with same email")
         return self.user_id
 
     async def add_user_to_group(self, user_id: str, group_id: str) -> None:
@@ -50,7 +58,9 @@ class _FakeKC:
     async def send_execute_actions_email(self, user_id: str, actions: Any, **kw: Any) -> None:
         self.calls.append(("email", user_id, actions))
         if self.fail_email:
-            raise KeycloakAdminError(500, "no smtp")
+            # Simulate a transport error (httpx.HTTPError-like), NOT a KeycloakAdminError,
+            # to exercise the broadened best-effort except.
+            raise RuntimeError("connection reset")
 
     async def delete_user(self, user_id: str) -> None:
         self.deleted.append(user_id)
@@ -222,10 +232,34 @@ async def test_member_rolled_back_when_role_assignment_fails() -> None:
 
 @pytest.mark.asyncio
 async def test_invite_email_failure_is_best_effort() -> None:
+    # The email step raises a transport error (RuntimeError, not KeycloakAdminError);
+    # the broadened best-effort except must swallow it (no orphan, no failure). [M-2]
     kc = _FakeKC()
-    kc.fail_email = True  # no SMTP configured
+    kc.fail_email = True
     session = _FakeSession(row=SimpleNamespace(slug="acme", keycloak_group_id="grp-1"))
     svc, _ = _service(kc, session)
     result = await svc.invite_member(tenant_id=_TID, email="x@y.io")
     assert result.user_id == "usr-1"  # provisioning still succeeds
     assert kc.deleted == []  # NOT rolled back
+
+
+@pytest.mark.asyncio
+async def test_invite_rejects_non_tenant_role() -> None:  # [L-2]
+    """A tenant invite cannot grant platform_admin, even bypassing the Pydantic edge."""
+    kc = _FakeKC()
+    session = _FakeSession(row=SimpleNamespace(slug="acme", keycloak_group_id="grp-1"))
+    svc, _ = _service(kc, session)
+    with pytest.raises(PermissionDeniedError):
+        await svc.invite_member(tenant_id=_TID, email="x@y.io", roles=["platform_admin"])
+    assert kc.calls == []  # rejected before any Keycloak call
+
+
+@pytest.mark.asyncio
+async def test_invite_existing_email_is_conflict_not_500() -> None:  # [L-1]
+    kc = _FakeKC()
+    kc.create_conflict = True  # email already taken realm-wide
+    session = _FakeSession(row=SimpleNamespace(slug="acme", keycloak_group_id="grp-1"))
+    svc, _ = _service(kc, session)
+    with pytest.raises(ConflictError):
+        await svc.invite_member(tenant_id=_TID, email="taken@y.io")
+    assert kc.deleted == []  # nothing to roll back — user was never created

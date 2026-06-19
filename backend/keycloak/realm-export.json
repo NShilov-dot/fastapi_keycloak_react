@@ -124,7 +124,9 @@
       "serviceAccountClientId": "saas-backend-admin",
       "clientRoles": {
         "realm-management": [
-          "realm-admin"
+          "manage-users",
+          "manage-realm",
+          "view-realm"
         ]
       }
     }

@@ -1,8 +1,10 @@
 """Async Keycloak Admin REST API client.
 
 Authenticates via client_credentials against the realm's own token endpoint.
-The service-account client must have the realm-management > manage-groups and
-manage-users composite roles assigned in Keycloak.
+The service-account client needs these realm-management roles (NOT the full
+realm-admin composite): `manage-users` (users, role-mappings, group membership,
+execute-actions-email), `manage-realm` (group CRUD), `view-realm` (read realm
+roles for assign_realm_role). See realm-export.json.
 
 URL layout (derived from issuer):
   token endpoint : {issuer}/protocol/openid-connect/token

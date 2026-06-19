@@ -59,6 +59,9 @@ async def _client(*roles: str) -> AsyncIterator[tuple[httpx.AsyncClient, _FakeSe
     fake = _FakeService()
     app.dependency_overrides[deps._principal] = lambda: _principal(*roles)
     app.dependency_overrides[admin_router._provisioning_service] = lambda: fake
+    # check_rate_limit needs app.state.rate_limiter (set by the lifespan we skip here);
+    # these tests cover RBAC/routing, not throttling, so stub it out.
+    app.dependency_overrides[deps.check_rate_limit] = lambda: None
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://t"
     ) as ac:
