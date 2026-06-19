@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { useAuth } from '../auth/AuthProvider'
+import { Button } from '@/components/ui/button'
 
 export function Header() {
   const { user, logout } = useAuth()
@@ -15,12 +16,9 @@ export function Header() {
         </Link>
         <div className="flex items-center gap-4">
           <span className="text-sm text-gray-500">{label}</span>
-          <button
-            onClick={logout}
-            className="text-sm text-gray-500 hover:text-gray-900 transition-colors"
-          >
+          <Button variant="ghost" size="sm" onClick={logout}>
             Logout
-          </button>
+          </Button>
         </div>
       </div>
     </header>

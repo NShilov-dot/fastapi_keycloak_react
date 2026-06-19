@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { Header } from './components/Header'
 import { LoadingSpinner } from './components/LoadingSpinner'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { Toaster } from './components/ui/sonner'
 
 // Per-route code splitting — each page becomes its own JS chunk
 const TasksPage      = lazy(() => import('./pages/TasksPage'))
@@ -25,6 +26,7 @@ export default function App() {
           </Suspense>
         </ErrorBoundary>
       </main>
+      <Toaster />
     </div>
   )
 }

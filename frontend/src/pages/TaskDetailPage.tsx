@@ -6,31 +6,20 @@ import { useAuth } from '../auth/AuthProvider'
 import { canManageTask, isOwnTask } from '../auth/access'
 import { StatusBadge } from '../components/StatusBadge'
 import { LoadingSpinner } from '../components/LoadingSpinner'
+import { Button, buttonVariants } from '@/components/ui/button'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 
 const PRIORITY_LABEL = { low: 'Low', medium: 'Medium', high: 'High' } as const
-
-function Btn({
-  label,
-  onClick,
-  disabled,
-  variant = 'default',
-}: {
-  label: string
-  onClick: () => void
-  disabled: boolean
-  variant?: 'default' | 'danger'
-}) {
-  const base = 'px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed border'
-  const cls =
-    variant === 'danger'
-      ? `${base} border-red-300 text-red-600 hover:bg-red-50`
-      : `${base} border-gray-300 text-gray-700 hover:bg-gray-50`
-  return (
-    <button className={cls} onClick={onClick} disabled={disabled}>
-      {label}
-    </button>
-  )
-}
 
 export default function TaskDetailPage() {
   const { id }      = useParams<{ id: string }>()
@@ -58,7 +47,6 @@ export default function TaskDetailPage() {
   })
 
   const busy = startM.isPending || completeM.isPending || cancelM.isPending || deleteM.isPending
-  const mutErr = startM.error ?? completeM.error ?? cancelM.error ?? deleteM.error
 
   if (isLoading) return <LoadingSpinner />
 
@@ -127,31 +115,49 @@ export default function TaskDetailPage() {
         {canManage ? (
           <div className="flex flex-wrap gap-2 pt-4 border-t border-gray-100">
             {s === 'open' && (
-              <Btn label="Start" onClick={() => startM.mutate()} disabled={busy} />
+              <Button variant="outline" size="sm" onClick={() => startM.mutate()} disabled={busy}>
+                Start
+              </Button>
             )}
             {(s === 'open' || s === 'in_progress') && (
-              <Btn label="Complete" onClick={() => completeM.mutate()} disabled={busy} />
+              <Button variant="outline" size="sm" onClick={() => completeM.mutate()} disabled={busy}>
+                Complete
+              </Button>
             )}
             {(s === 'open' || s === 'in_progress') && (
-              <Btn label="Cancel" onClick={() => cancelM.mutate()} disabled={busy} />
+              <Button variant="outline" size="sm" onClick={() => cancelM.mutate()} disabled={busy}>
+                Cancel
+              </Button>
             )}
-            <Btn
-              label="Delete"
-              variant="danger"
-              disabled={busy}
-              onClick={() => {
-                if (window.confirm('Delete this task?')) deleteM.mutate()
-              }}
-            />
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" size="sm" disabled={busy}>
+                  Delete
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete this task?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This action cannot be undone. The task will be permanently removed.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className={buttonVariants({ variant: 'destructive' })}
+                    onClick={() => deleteM.mutate()}
+                  >
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         ) : (
           <p className="pt-4 border-t border-gray-100 text-sm text-gray-400">
             Read-only — this task belongs to another member of your organization.
           </p>
-        )}
-
-        {mutErr && (
-          <p className="text-red-600 text-sm mt-3">Action failed. Please try again.</p>
         )}
       </div>
     </div>

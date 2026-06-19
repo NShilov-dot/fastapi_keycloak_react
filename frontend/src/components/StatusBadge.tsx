@@ -1,11 +1,22 @@
+import { cva } from 'class-variance-authority'
 import type { TaskStatus } from '../types/api'
+import { Badge } from '@/components/ui/badge'
 
-const STYLES: Record<TaskStatus, string> = {
-  open:        'bg-blue-100 text-blue-700',
-  in_progress: 'bg-yellow-100 text-yellow-700',
-  done:        'bg-green-100 text-green-700',
-  cancelled:   'bg-gray-100 text-gray-500',
-}
+// Declarative status -> colour mapping via cva, rendered through the shared
+// Badge primitive. Replaces the previous hand-concatenated className string.
+const statusStyles = cva(
+  'rounded px-2 py-0.5 font-medium shrink-0 border-transparent',
+  {
+    variants: {
+      status: {
+        open:        'bg-blue-100 text-blue-700 hover:bg-blue-100',
+        in_progress: 'bg-yellow-100 text-yellow-700 hover:bg-yellow-100',
+        done:        'bg-green-100 text-green-700 hover:bg-green-100',
+        cancelled:   'bg-gray-100 text-gray-500 hover:bg-gray-100',
+      },
+    },
+  },
+)
 
 const LABELS: Record<TaskStatus, string> = {
   open:        'Open',
@@ -16,8 +27,8 @@ const LABELS: Record<TaskStatus, string> = {
 
 export function StatusBadge({ status }: { status: TaskStatus }) {
   return (
-    <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium shrink-0 ${STYLES[status]}`}>
+    <Badge variant="secondary" className={statusStyles({ status })}>
       {LABELS[status]}
-    </span>
+    </Badge>
   )
 }

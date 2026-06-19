@@ -5,6 +5,8 @@ import { tasksApi } from '../api/tasks'
 import type { TaskStatus } from '../types/api'
 import { TaskCard } from '../components/TaskCard'
 import { LoadingSpinner } from '../components/LoadingSpinner'
+import { Button } from '@/components/ui/button'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 const STATUS_TABS: { value: TaskStatus | ''; label: string }[] = [
   { value: '',            label: 'All' },
@@ -15,6 +17,11 @@ const STATUS_TABS: { value: TaskStatus | ''; label: string }[] = [
 ]
 
 const PAGE_SIZE = 20
+
+// Selected ToggleGroupItem -> solid primary so the active filter is obvious
+// (the default data-[state=on]:bg-accent is too faint — --accent equals --muted).
+const ACTIVE_ITEM =
+  'data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:border-primary'
 
 export default function TasksPage() {
   const [filter, setFilter] = useState<TaskStatus | ''>('')
@@ -46,45 +53,41 @@ export default function TasksPage() {
       {/* Top bar */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold text-gray-900">Tasks</h1>
-        <Link
-          to="/tasks/new"
-          className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-        >
-          + New Task
-        </Link>
+        <Button asChild>
+          <Link to="/tasks/new">+ New Task</Link>
+        </Button>
       </div>
 
       {/* Scope: all org tasks vs only mine */}
-      <div className="flex gap-1 mb-3">
-        {(['all', 'mine'] as const).map((sc) => (
-          <button
-            key={sc}
-            onClick={() => { setScope(sc); setPage(0) }}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              scope === sc ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            {sc === 'all' ? 'All (organization)' : 'My tasks'}
-          </button>
-        ))}
-      </div>
+      <ToggleGroup
+        type="single"
+        value={scope}
+        onValueChange={(v) => { if (v) { setScope(v as 'all' | 'mine'); setPage(0) } }}
+        variant="outline"
+        size="sm"
+        aria-label="Filter by scope"
+        className="justify-start gap-1 mb-3"
+      >
+        <ToggleGroupItem value="all" className={ACTIVE_ITEM}>All (organization)</ToggleGroupItem>
+        <ToggleGroupItem value="mine" className={ACTIVE_ITEM}>My tasks</ToggleGroupItem>
+      </ToggleGroup>
 
-      {/* Status tabs */}
-      <div className="flex gap-1 mb-5">
+      {/* Status filter — single-select radiogroup (not Tabs: there are no tabpanels) */}
+      <ToggleGroup
+        type="single"
+        value={filter || 'all'}
+        onValueChange={(v) => { if (v) switchFilter(v === 'all' ? '' : (v as TaskStatus)) }}
+        variant="outline"
+        size="sm"
+        aria-label="Filter by status"
+        className="justify-start flex-wrap gap-1 mb-5"
+      >
         {STATUS_TABS.map(({ value, label }) => (
-          <button
-            key={value}
-            onClick={() => switchFilter(value)}
-            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-              filter === value
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
+          <ToggleGroupItem key={value || 'all'} value={value || 'all'} className={ACTIVE_ITEM}>
             {label}
-          </button>
+          </ToggleGroupItem>
         ))}
-      </div>
+      </ToggleGroup>
 
       {isLoading && <LoadingSpinner />}
 
@@ -113,23 +116,25 @@ export default function TasksPage() {
       {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex justify-center items-center gap-2 mt-6">
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             disabled={page === 0}
             onClick={() => setPage(p => p - 1)}
-            className="px-3 py-1.5 text-sm rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             ← Prev
-          </button>
+          </Button>
           <span className="text-sm text-gray-600 px-2">
             {page + 1} / {totalPages}
           </span>
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             disabled={page >= totalPages - 1}
             onClick={() => setPage(p => p + 1)}
-            className="px-3 py-1.5 text-sm rounded border border-gray-300 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Next →
-          </button>
+          </Button>
         </div>
       )}
     </div>

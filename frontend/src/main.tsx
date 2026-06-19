@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider, MutationCache, QueryCache } from '@ta
 import { BrowserRouter } from 'react-router-dom'
 import { ApiError } from './api/client'
 import { AuthProvider } from './auth/AuthProvider'
+import { getErrorMessage } from './lib/errors'
+import { toast } from 'sonner'
 import App from './App'
 import './index.css'
 
@@ -23,9 +25,12 @@ const queryClient = new QueryClient({
   }),
   mutationCache: new MutationCache({
     onError: (err) => {
-      if (isUnauthorized(err) && import.meta.env.DEV) {
-        console.warn('[mutation] 401 — redirecting to login')
+      // 401 is handled by the api client (OIDC redirect) — don't toast it.
+      if (isUnauthorized(err)) {
+        if (import.meta.env.DEV) console.warn('[mutation] 401 — redirecting to login')
+        return
       }
+      toast.error(getErrorMessage(err))
     },
   }),
   defaultOptions: {

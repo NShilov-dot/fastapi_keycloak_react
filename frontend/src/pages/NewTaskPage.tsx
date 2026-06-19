@@ -1,19 +1,47 @@
-import { useState, FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
 import { tasksApi, CreateTaskInput } from '../api/tasks'
-import type { TaskPriority } from '../types/api'
+import { Button } from '@/components/ui/button'
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+
+const formSchema = z.object({
+  title: z.string().trim().min(1, 'Title is required').max(200, 'Title is too long'),
+  description: z.string().trim().max(4000, 'Description is too long').optional(),
+  priority: z.enum(['low', 'medium', 'high']),
+  dueAt: z.string().optional(),
+})
+
+type FormValues = z.infer<typeof formSchema>
 
 export default function NewTaskPage() {
   const navigate    = useNavigate()
   const queryClient = useQueryClient()
 
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [priority, setPriority] = useState<TaskPriority>('medium')
-  const [dueAt,       setDueAt]       = useState('')
+  const form = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: { title: '', description: '', priority: 'medium', dueAt: '' },
+  })
 
-  const { mutate, isPending, isError } = useMutation({
+  const { mutate, isPending } = useMutation({
     mutationFn: (input: CreateTaskInput) => tasksApi.create(input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
@@ -21,14 +49,12 @@ export default function NewTaskPage() {
     },
   })
 
-  function handleSubmit(e: FormEvent) {
-    e.preventDefault()
-    if (!title.trim()) return
+  function onSubmit(values: FormValues) {
     mutate({
-      title:       title.trim(),
-      description: description.trim() || undefined,
-      priority,
-      due_at:      dueAt ? new Date(dueAt).toISOString() : undefined,
+      title:       values.title,
+      description: values.description || undefined,
+      priority:    values.priority,
+      due_at:      values.dueAt ? new Date(values.dueAt).toISOString() : undefined,
     })
   }
 
@@ -41,88 +67,100 @@ export default function NewTaskPage() {
         <span className="text-gray-900 font-medium">New Task</span>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="bg-white border border-gray-200 rounded-lg p-6 space-y-5"
-      >
-        {/* Title */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Title <span className="text-red-500">*</span>
-          </label>
-          <input
-            type="text"
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            maxLength={200}
-            placeholder="What needs to be done?"
-            required
-            autoFocus
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+      <Form {...form}>
+        <form
+          onSubmit={form.handleSubmit(onSubmit)}
+          className="bg-white border border-gray-200 rounded-lg p-6 space-y-5"
+        >
+          <FormField
+            control={form.control}
+            name="title"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Title <span className="text-red-500">*</span></FormLabel>
+                <FormControl>
+                  <Input
+                    placeholder="What needs to be done?"
+                    maxLength={200}
+                    autoFocus
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
           />
-        </div>
 
-        {/* Description */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Description
-          </label>
-          <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            rows={3}
-            maxLength={4000}
-            placeholder="Optional details…"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+          <FormField
+            control={form.control}
+            name="description"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Description</FormLabel>
+                <FormControl>
+                  <Textarea
+                    rows={3}
+                    maxLength={4000}
+                    placeholder="Optional details…"
+                    className="resize-none"
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
           />
-        </div>
 
-        {/* Priority + Due date */}
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Priority</label>
-            <select
-              value={priority}
-              onChange={e => setPriority(e.target.value as TaskPriority)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Due date</label>
-            <input
-              type="datetime-local"
-              value={dueAt}
-              onChange={e => setDueAt(e.target.value)}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="priority"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Priority</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="low">Low</SelectItem>
+                      <SelectItem value="medium">Medium</SelectItem>
+                      <SelectItem value="high">High</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="dueAt"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Due date</FormLabel>
+                  <FormControl>
+                    <Input type="datetime-local" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
           </div>
-        </div>
 
-        {isError && (
-          <p className="text-red-600 text-sm">Failed to create task. Please try again.</p>
-        )}
-
-        {/* Actions */}
-        <div className="flex justify-end gap-3 pt-1">
-          <Link
-            to="/tasks"
-            className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900"
-          >
-            Cancel
-          </Link>
-          <button
-            type="submit"
-            disabled={isPending || !title.trim()}
-            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {isPending ? 'Creating…' : 'Create Task'}
-          </button>
-        </div>
-      </form>
+          {/* Actions */}
+          <div className="flex justify-end gap-3 pt-1">
+            <Button asChild variant="ghost">
+              <Link to="/tasks">Cancel</Link>
+            </Button>
+            <Button type="submit" disabled={isPending}>
+              {isPending ? 'Creating…' : 'Create Task'}
+            </Button>
+          </div>
+        </form>
+      </Form>
     </div>
   )
 }
