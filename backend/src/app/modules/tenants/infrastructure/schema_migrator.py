@@ -16,6 +16,9 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# Bound the migration so a hung/slow Alembic run can't block the request forever.
+_MIGRATION_TIMEOUT_SECONDS = 120
+
 
 async def run_tenant_migrations(slug: str) -> None:
     schema = f"tenant_{slug}"
@@ -27,7 +30,15 @@ async def run_tenant_migrations(slug: str) -> None:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    out, _ = await proc.communicate()
+    try:
+        out, _ = await asyncio.wait_for(
+            proc.communicate(), timeout=_MIGRATION_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()  # reap so we don't leak a zombie
+        logger.error("tenant.schema_migration_timeout", schema=schema)
+        raise RuntimeError(f"tenant schema migration timed out for {schema}") from None
     if proc.returncode != 0:
         detail = out.decode(errors="replace")[-800:] if out else ""
         logger.error("tenant.schema_migration_failed", schema=schema, detail=detail)

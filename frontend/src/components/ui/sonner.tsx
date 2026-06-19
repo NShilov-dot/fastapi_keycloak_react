@@ -1,14 +1,15 @@
 import { type ComponentProps } from 'react'
+import { useTheme } from 'next-themes'
 import { Toaster as Sonner } from 'sonner'
 
 type ToasterProps = ComponentProps<typeof Sonner>
 
-// NOTE: theme is hard-coded to "light" for now. Phase 4 (dark mode) swaps this
-// to read next-themes' useTheme() so toasts follow the active colour scheme.
 const Toaster = (props: ToasterProps) => {
+  const { theme = 'system' } = useTheme()
+
   return (
     <Sonner
-      theme="light"
+      theme={theme as ToasterProps['theme']}
       className="toaster group"
       richColors
       closeButton

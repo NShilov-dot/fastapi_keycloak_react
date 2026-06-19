@@ -62,15 +62,15 @@ export default function NewTaskPage() {
     <div className="max-w-lg">
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 mb-6 text-sm">
-        <Link to="/tasks" className="text-gray-400 hover:text-gray-600">← Tasks</Link>
-        <span className="text-gray-300">/</span>
-        <span className="text-gray-900 font-medium">New Task</span>
+        <Link to="/tasks" className="text-muted-foreground hover:text-foreground">← Tasks</Link>
+        <span className="text-muted-foreground/50">/</span>
+        <span className="text-foreground font-medium">New Task</span>
       </div>
 
       <Form {...form}>
         <form
           onSubmit={form.handleSubmit(onSubmit)}
-          className="bg-white border border-gray-200 rounded-lg p-6 space-y-5"
+          className="bg-card border border-border rounded-lg p-6 space-y-5"
         >
           <FormField
             control={form.control}

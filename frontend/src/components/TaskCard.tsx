@@ -26,27 +26,27 @@ export function TaskCard({ task }: { task: Task }) {
       <Card className="p-4 shadow-none transition-colors hover:border-primary/50 hover:shadow-md">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <p className="font-medium text-gray-900 truncate">{task.title}</p>
+            <p className="font-medium text-foreground truncate">{task.title}</p>
             {task.description && (
-              <p className="text-sm text-gray-500 mt-0.5 line-clamp-2">{task.description}</p>
+              <p className="text-sm text-muted-foreground mt-0.5 line-clamp-2">{task.description}</p>
             )}
           </div>
           <StatusBadge status={task.status} />
         </div>
 
-        <div className="flex items-center gap-3 mt-3 text-xs text-gray-500">
+        <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
             <span className={`w-1.5 h-1.5 rounded-full ${PRIORITY_DOT[task.priority]}`} />
             {PRIORITY_LABEL[task.priority]}
           </span>
           {due && (
-            <span className={overdue ? 'text-red-600 font-medium' : ''}>
+            <span className={overdue ? 'text-red-600 dark:text-red-400 font-medium' : ''}>
               Due {due.toLocaleDateString()}
             </span>
           )}
           <span
             className={`ml-auto px-1.5 py-0.5 rounded text-[11px] ${
-              own ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'
+              own ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
             }`}
             title={own ? 'Your task' : `Owner ${task.owner_id}`}
           >

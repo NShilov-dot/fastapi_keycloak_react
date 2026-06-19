@@ -6,8 +6,11 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from app.core.crypto import TokenCipher
 
-# Placeholder/weak secrets we refuse to run with in production.
-_WEAK_SECRETS = frozenset({"", "change-me-in-prod", "changeme", "secret", "admin"})
+# Placeholder/weak/dev secrets we refuse to run with in production. Includes the
+# committed dev values from realm-export.json so they can never reach prod.
+_WEAK_SECRETS = frozenset(
+    {"", "change-me-in-prod", "changeme", "secret", "admin", "saas-backend-admin-dev-secret"}
+)
 
 
 def _split_csv(value: object) -> object:
@@ -238,4 +241,4 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()  # type: ignore[call-arg]
+    return Settings()

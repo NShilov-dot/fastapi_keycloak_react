@@ -100,29 +100,64 @@ class TenantProvisioningService:
                 await session.rollback()
                 raise ConflictError(f"Tenant slug '{slug}' already exists") from exc
 
-        # 2. Keycloak group carrying the tenant_id attribute.
-        spec = TenantGroupSpec(tenant_slug=slug, tenant_id=str(tenant_id))
-        group_id = await self._kc.create_group(spec.group_name, attributes=spec.attributes)
-        async with self._sm() as session:
-            await session.execute(
-                text("UPDATE public.tenants SET keycloak_group_id = :gid WHERE id = :id"),
-                {"gid": group_id, "id": tenant_id},
+        # Steps 2-4 happen after the row is committed; if any fails we compensate
+        # (delete the group + the registry row) so a stuck half-provisioned tenant
+        # doesn't block re-onboarding the same slug.
+        group_id: str | None = None
+        try:
+            # 2. Keycloak group carrying the tenant_id attribute.
+            spec = TenantGroupSpec(tenant_slug=slug, tenant_id=str(tenant_id))
+            group_id = await self._kc.create_group(spec.group_name, attributes=spec.attributes)
+            async with self._sm() as session:
+                await session.execute(
+                    text("UPDATE public.tenants SET keycloak_group_id = :gid WHERE id = :id"),
+                    {"gid": group_id, "id": tenant_id},
+                )
+                await session.commit()
+
+            # 3. Tenant Postgres schema (tasks tables, etc.). Idempotent
+            #    (CREATE SCHEMA IF NOT EXISTS + versioned alembic), so it's safe to
+            #    re-run on a later re-onboard.
+            await self._migrate_schema(slug)
+
+            # 4. First admin user.
+            admin_user_id = await self._provision_member(
+                tenant_id=tenant_id, group_id=group_id, email=admin_email, roles=["tenant_admin"]
             )
-            await session.commit()
+        except Exception:
+            await self._compensate_onboard(tenant_id=tenant_id, group_id=group_id, slug=slug)
+            raise
 
-        # 3. Tenant Postgres schema (tasks tables, etc.).
-        await self._migrate_schema(slug)
-
-        # 4. First admin user.
-        admin_user_id = await self._provision_member(
-            tenant_id=tenant_id, group_id=group_id, email=admin_email, roles=["tenant_admin"]
-        )
         logger.info(
             "tenant.onboarded", tenant_id=str(tenant_id), slug=slug, admin_user_id=admin_user_id
         )
         return TenantOnboarded(
             tenant_id=tenant_id, slug=slug, keycloak_group_id=group_id, admin_user_id=admin_user_id
         )
+
+    async def _compensate_onboard(
+        self, *, tenant_id: UUID, group_id: str | None, slug: str
+    ) -> None:
+        """Best-effort rollback of a partially-provisioned tenant.
+
+        Removes the Keycloak group and the public.tenants row. The tenant schema
+        is left as-is — it's idempotent and reused on a successful re-onboard.
+        """
+        logger.warning("tenant.onboard_compensating", tenant_id=str(tenant_id), slug=slug)
+        if group_id is not None:
+            try:
+                await self._kc.delete_group(group_id)
+            except KeycloakAdminError:
+                logger.warning("tenant.compensate_group_failed", group_id=group_id)
+        try:
+            async with self._sm() as session:
+                await session.execute(
+                    text("DELETE FROM public.tenants WHERE id = :id"), {"id": tenant_id}
+                )
+                await session.commit()
+        except Exception:
+            # Compensation is best-effort; it must not mask the original error.
+            logger.warning("tenant.compensate_row_failed", tenant_id=str(tenant_id))
 
     # ------------------------------------------------------------------
     # Member (employee) onboarding

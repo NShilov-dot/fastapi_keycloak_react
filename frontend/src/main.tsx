@@ -6,6 +6,7 @@ import { ApiError } from './api/client'
 import { AuthProvider } from './auth/AuthProvider'
 import { getErrorMessage } from './lib/errors'
 import { toast } from 'sonner'
+import { ThemeProvider } from './components/theme-provider'
 import App from './App'
 import './index.css'
 
@@ -50,12 +51,14 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
-      <AuthProvider>
-        <QueryClientProvider client={queryClient}>
-          <App />
-        </QueryClientProvider>
-      </AuthProvider>
-    </BrowserRouter>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <BrowserRouter>
+        <AuthProvider>
+          <QueryClientProvider client={queryClient}>
+            <App />
+          </QueryClientProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    </ThemeProvider>
   </StrictMode>,
 )

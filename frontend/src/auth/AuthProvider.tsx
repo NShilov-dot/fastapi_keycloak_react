@@ -98,16 +98,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="text-center space-y-3 max-w-sm px-4">
-          <p className="text-gray-700 font-medium">Service unavailable</p>
-          <p className="text-sm text-gray-500">{error}</p>
+          <p className="text-foreground font-medium">Service unavailable</p>
+          <p className="text-sm text-muted-foreground">{error}</p>
           <button
             onClick={() => {
               clearRedirectLoopState()
               window.location.assign('/')
             }}
-            className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+            className="px-4 py-2 text-sm border border-input rounded-md hover:bg-accent hover:text-accent-foreground transition-colors"
           >
             Retry
           </button>
@@ -118,8 +118,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="w-8 h-8 border-4 border-gray-200 border-t-blue-600 rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="w-8 h-8 border-4 border-muted border-t-primary rounded-full animate-spin" />
       </div>
     )
   }

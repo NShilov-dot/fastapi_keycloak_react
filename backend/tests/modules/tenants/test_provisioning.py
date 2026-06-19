@@ -26,10 +26,14 @@ class _FakeKC:
         self.fail_assign_role = False
         self.fail_email = False
         self.deleted: list[str] = []
+        self.deleted_groups: list[str] = []
 
     async def create_group(self, name: str, *, attributes: Any = None) -> str:
         self.calls.append(("create_group", name, attributes))
         return self.group_id
+
+    async def delete_group(self, group_id: str) -> None:
+        self.deleted_groups.append(group_id)
 
     async def create_user(self, **kw: Any) -> str:
         self.calls.append(("create_user", kw))
@@ -58,6 +62,7 @@ class _FakeSession:
         self.raise_first = raise_first
         self.committed = 0
         self.rolled_back = 0
+        self.executed: list[str] = []
 
     async def __aenter__(self) -> _FakeSession:
         return self
@@ -66,6 +71,7 @@ class _FakeSession:
         return False
 
     async def execute(self, _stmt: Any, _params: Any = None) -> Any:
+        self.executed.append(str(_stmt))
         if self.raise_first is not None:
             exc, self.raise_first = self.raise_first, None
             raise exc
@@ -139,6 +145,29 @@ async def test_onboard_duplicate_slug_raises_conflict() -> None:
         await svc.onboard_tenant(slug="acme", name="ACME", admin_email="a@b.io")
     assert session.rolled_back == 1
     assert kc.calls == [] and migrated == []  # no KC group, no schema
+
+
+@pytest.mark.asyncio
+async def test_onboard_compensates_when_a_later_step_fails() -> None:
+    """If schema migration fails after the row is committed, the group and the
+    public.tenants row are rolled back so the slug can be re-onboarded."""
+    kc = _FakeKC()
+    session = _FakeSession()
+
+    async def _failing_migrate(_slug: str) -> None:
+        raise RuntimeError("alembic boom")
+
+    svc = TenantProvisioningService(
+        sessionmaker=cast(async_sessionmaker[AsyncSession], lambda: session),
+        kc=cast(KeycloakAdminClient, kc),
+        migrate_schema=_failing_migrate,
+        invite_client_id="saas-backend",
+    )
+    with pytest.raises(RuntimeError):
+        await svc.onboard_tenant(slug="acme", name="ACME", admin_email="a@b.io")
+
+    assert kc.group_id in kc.deleted_groups  # KC group compensated
+    assert any("DELETE FROM public.tenants" in sql for sql in session.executed)  # row removed
 
 
 # ---------------------------------------------------------------------------
