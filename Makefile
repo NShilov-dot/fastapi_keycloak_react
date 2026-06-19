@@ -1,53 +1,77 @@
 # SaaS (FastAPI + Keycloak + React) — developer task runner.
 # Run `make` or `make help` to list targets.
+#
+# Environments are separate compose stacks:
+#   dev  (default): docker-compose.yml + docker-compose.dev.yml   (.env)
+#   prod          : docker-compose.yml + docker-compose.prod.yml  (.env.prod)
+#
+# Pick the env with ENV=prod, or use the prod-* aliases:
+#   make up                 # dev
+#   make up ENV=prod        # prod   (≡ make prod-up)
 
 SHELL    := /usr/bin/env bash
-COMPOSE  := docker compose
 BACKEND  := backend
+ENV      ?= dev
+
+ifeq ($(ENV),prod)
+  COMPOSE := docker compose --env-file .env.prod -f docker-compose.yml -f docker-compose.prod.yml
+else ifeq ($(ENV),dev)
+  COMPOSE := docker compose -f docker-compose.yml -f docker-compose.dev.yml
+else
+  $(error ENV must be 'dev' or 'prod', got '$(ENV)')
+endif
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env gen-key up down restart build logs ps clean \
+.PHONY: help env env-prod gen-key tls-dev-cert \
+        up down restart build logs ps clean config \
+        prod-up prod-down prod-restart prod-build prod-logs prod-ps prod-migrate \
         migrate revision psql redis-cli backend-shell \
-        test lint fmt typecheck check \
-        fe-install fe-build fe-dev dev-backend
+        test lint fmt typecheck check fe-install fe-build fe-dev dev-backend
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
 	  | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n",$$1,$$2}'
 
 # --------------------------------------------------------------------------
-# Environment
+# Environment files
 # --------------------------------------------------------------------------
 
-env: ## Scaffold ./.env from backend/.env.example with a fresh encryption key
-	@if [ -f .env ]; then \
-	  echo ".env already exists — not overwriting"; \
-	else \
+env: ## Scaffold ./.env (dev) from backend/.env.example with a fresh encryption key
+	@if [ -f .env ]; then echo ".env already exists — not overwriting"; else \
 	  cp $(BACKEND)/.env.example .env; \
-	  key=$$($(MAKE) -s gen-key); \
-	  printf '\nSESSION_ENCRYPTION_KEYS=%s\n' "$$key" >> .env; \
-	  echo "Created .env (with a generated SESSION_ENCRYPTION_KEYS)."; \
-	  echo "Review hostnames: localhost for local dev, compose overrides for docker."; \
-	fi
+	  printf '\nSESSION_ENCRYPTION_KEYS=%s\n' "$$($(MAKE) -s gen-key)" >> .env; \
+	  echo "Created .env (dev)."; fi
+
+env-prod: ## Scaffold ./.env.prod from .env.prod.example (then fill REAL secrets!)
+	@if [ -f .env.prod ]; then echo ".env.prod already exists — not overwriting"; else \
+	  cp .env.prod.example .env.prod; \
+	  echo "Created .env.prod — edit it and replace every CHANGE_ME (incl. SESSION_ENCRYPTION_KEYS, run 'make gen-key')."; fi
 
 gen-key: ## Print a fresh base64 AES-256 key for SESSION_ENCRYPTION_KEYS
 	@cd $(BACKEND) && PYTHONPATH=src .venv/bin/python -c \
 	  "from app.core.crypto import generate_key; print(generate_key())"
 
+tls-dev-cert: ## Generate a self-signed cert into nginx/certs (for local prod testing only)
+	@mkdir -p nginx/certs
+	openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+	  -keyout nginx/certs/privkey.pem -out nginx/certs/fullchain.pem \
+	  -subj "/CN=localhost" -addext "subjectAltName=DNS:localhost"
+	@echo "Self-signed cert written to nginx/certs/ (NOT for real production)."
+
 # --------------------------------------------------------------------------
-# Docker stack lifecycle
+# Stack lifecycle (ENV=dev default; ENV=prod or prod-* for production)
 # --------------------------------------------------------------------------
 
-up: ## Build & start the full stack (postgres, keycloak, redis, app, frontend)
+up: ## Build & start the stack  (ENV=dev|prod)
 	$(COMPOSE) up -d --build
 
-down: ## Stop the stack (keep volumes/data)
+down: ## Stop the stack (keep volumes)  (ENV=dev|prod)
 	$(COMPOSE) down
 
 restart: down up ## Restart the stack
 
-build: ## Build all images
+build: ## Build images  (ENV=dev|prod)
 	$(COMPOSE) build
 
 logs: ## Tail logs (one service: make logs svc=app)
@@ -56,14 +80,33 @@ logs: ## Tail logs (one service: make logs svc=app)
 ps: ## Show running services
 	$(COMPOSE) ps
 
+config: ## Render & validate the merged compose config
+	$(COMPOSE) config
+
 clean: ## Stop the stack AND remove volumes (DESTROYS db/redis data)
 	$(COMPOSE) down -v
 
+# --- Production aliases (explicit ENV=prod) ---
+prod-up:      ## Build & start the PRODUCTION stack
+	$(MAKE) up ENV=prod
+prod-down:    ## Stop the production stack
+	$(MAKE) down ENV=prod
+prod-restart: ## Restart the production stack
+	$(MAKE) restart ENV=prod
+prod-build:   ## Build production images
+	$(MAKE) build ENV=prod
+prod-logs:    ## Tail production logs (svc=app)
+	$(MAKE) logs ENV=prod svc=$(svc)
+prod-ps:      ## Show production services
+	$(MAKE) ps ENV=prod
+prod-migrate: ## Apply public migrations in the production stack
+	$(MAKE) migrate ENV=prod
+
 # --------------------------------------------------------------------------
-# Database / Keycloak / Redis (inside the running stack)
+# Database / Keycloak / Redis (inside the running stack; honors ENV)
 # --------------------------------------------------------------------------
 
-migrate: ## Apply public-schema migrations (two-head setup: public + tenant branches)
+migrate: ## Apply public-schema migrations (two-head setup: public + tenant)
 	$(COMPOSE) exec app alembic -x scope=public upgrade public@head
 
 revision: ## Autogenerate a migration: make revision m="message"

@@ -2,8 +2,12 @@
 .env
 .env.*
 !.env.example
+!.env.prod.example
 *.pem
 *.key
+# TLS material for the edge nginx (prod); keep the dir, ignore the certs.
+nginx/certs/*
+!nginx/certs/.gitkeep
 
 # --- Python ---
 __pycache__/
