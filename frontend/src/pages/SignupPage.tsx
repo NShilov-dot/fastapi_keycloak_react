@@ -154,7 +154,7 @@ export default function SignupPage() {
                       <FormItem>
                         <FormLabel>Administrator email</FormLabel>
                         <FormControl>
-                          <Input type="email" placeholder="you@acme.com" {...field} />
+                          <Input type="email" placeholder="you@company.com" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>

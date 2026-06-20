@@ -6,8 +6,11 @@
 #
 # Host port publishing, source mounts, the app target (dev/runtime), the Keycloak
 # command, and Redis auth all live in the overlays — this file stays env-neutral.
+#
+# COMPOSE_PROJECT_NAME prefixes volumes/containers; override it (env or .env) so
+# two clones of this template can run side by side on one Docker host.
 
-name: saas
+name: ${COMPOSE_PROJECT_NAME:-saas}
 
 services:
   postgres:

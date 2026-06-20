@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Annotated
 
 from fastapi import Depends, Request
@@ -169,7 +169,7 @@ SessionDep = Annotated[AsyncSession, Depends(_session)]
 # RBAC helper
 # ---------------------------------------------------------------------------
 
-def require_roles(*roles: str):
+def require_roles(*roles: str) -> Callable[[Principal], Awaitable[Principal]]:
     """Dependency factory that enforces presence of all `roles` on the principal."""
     required = frozenset(roles)
 

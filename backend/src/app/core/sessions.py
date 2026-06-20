@@ -70,7 +70,7 @@ class SessionStore:
         cipher: TokenCipher | None = None,
         _redis: aioredis.Redis | None = None,
     ) -> None:
-        self._redis: aioredis.Redis = _redis or aioredis.from_url(  # type: ignore[assignment]
+        self._redis: aioredis.Redis = _redis or aioredis.from_url(
             redis_url, decode_responses=True
         )
         self._ttl = ttl_seconds

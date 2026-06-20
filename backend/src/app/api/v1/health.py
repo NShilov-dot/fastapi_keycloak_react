@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Annotated
-
 import structlog
 from fastapi import APIRouter, Response, status
 from sqlalchemy import text
@@ -27,7 +25,7 @@ async def readyz(_: SettingsDep, jwks: JWKSDep, response: Response) -> dict[str,
         async with get_sessionmaker()() as session:
             await session.execute(text("SELECT 1"))
         checks["database"] = "ok"
-    except Exception as exc:  # noqa: BLE001 — surface concrete reason in body
+    except Exception as exc:  # surface concrete reason in body, stay up
         healthy = False
         checks["database"] = f"failed: {exc.__class__.__name__}"
         logger.warning("readyz.db_failed", error=str(exc))
@@ -35,7 +33,7 @@ async def readyz(_: SettingsDep, jwks: JWKSDep, response: Response) -> dict[str,
     try:
         await jwks.get()
         checks["jwks"] = "ok"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # surface concrete reason in body, stay up
         healthy = False
         checks["jwks"] = f"failed: {exc.__class__.__name__}"
         logger.warning("readyz.jwks_failed", error=str(exc))

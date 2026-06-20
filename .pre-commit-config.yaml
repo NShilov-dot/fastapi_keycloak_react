@@ -1,0 +1,32 @@
+# Install: pip install pre-commit && pre-commit install
+# Run on all files: pre-commit run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+      - id: detect-private-key
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff           # lint (with autofix)
+        args: [--fix]
+        files: ^backend/.*\.py$
+      - id: ruff-format
+        files: ^backend/.*\.py$
+
+  - repo: local
+    hooks:
+      # Strict type check on application code only — matches `make typecheck`.
+      # Requires the backend venv (`backend/.venv`) created via uv.
+      - id: mypy-backend
+        name: mypy (backend src, strict)
+        entry: bash -c 'cd backend && PYTHONPATH=src .venv/bin/mypy src'
+        language: system
+        pass_filenames: false
+        files: ^backend/src/.*\.py$

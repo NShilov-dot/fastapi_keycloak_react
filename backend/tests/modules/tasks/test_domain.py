@@ -40,7 +40,7 @@ class TestTaskCreate:
 
     def test_rejects_naive_due_at(self) -> None:
         with pytest.raises(TaskValidationError):
-            _make_task(due_at=datetime(2030, 1, 1))  # noqa: DTZ001 — intentional
+            _make_task(due_at=datetime(2030, 1, 1))  # naive datetime is the point of the test
 
     def test_accepts_tz_aware_due_at(self) -> None:
         due = datetime.now(UTC) + timedelta(days=1)

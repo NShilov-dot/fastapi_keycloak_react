@@ -26,7 +26,7 @@ logger = structlog.get_logger(__name__)
 
 class RateLimiter:
     def __init__(self, redis_url: str) -> None:
-        self._redis: aioredis.Redis = aioredis.from_url(  # type: ignore[assignment]
+        self._redis: aioredis.Redis = aioredis.from_url(
             redis_url, decode_responses=True
         )
 

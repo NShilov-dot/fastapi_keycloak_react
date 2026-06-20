@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr, Field, SecretStr
 
 # A tenant_admin may only grant tenant-scoped roles — never platform_admin.
 MemberRole = Literal["tenant_user", "tenant_admin"]
+_DEFAULT_MEMBER_ROLES: list[MemberRole] = ["tenant_user"]
 
 # Slug shape shared by tenant onboarding and self-service signup.
 _SLUG_PATTERN = r"^[a-z][a-z0-9_]{1,40}$"
@@ -55,7 +56,7 @@ class TenantCreatedResponse(BaseModel):
 
 class InviteMemberRequest(BaseModel):
     email: EmailStr
-    roles: list[MemberRole] = Field(default_factory=lambda: ["tenant_user"])
+    roles: list[MemberRole] = Field(default_factory=lambda: list(_DEFAULT_MEMBER_ROLES))
 
 
 class MemberInvitedResponse(BaseModel):

@@ -26,8 +26,8 @@ endif
 .PHONY: help env env-prod gen-key tls-dev-cert \
         up down restart build logs ps clean config \
         prod-up prod-down prod-restart prod-build prod-logs prod-ps prod-migrate \
-        migrate seed-demo revision psql redis-cli backend-shell \
-        test lint fmt typecheck check fe-install fe-build fe-dev dev-backend
+        migrate seed-demo revision new-module psql redis-cli backend-shell \
+        test lint fmt typecheck check ci fe-install fe-build fe-check fe-dev dev-backend
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -118,6 +118,11 @@ seed-demo: ## Seed the demo tenant (matches the realm-export `demo` user) so /v1
 revision: ## Autogenerate a migration: make revision m="message"
 	$(COMPOSE) exec app alembic revision --autogenerate -m "$(m)"
 
+new-module: ## Scaffold a hexagonal module: make new-module NAME=invoices [ENTITY=Invoice]
+	@test -n "$(NAME)" || { echo "Usage: make new-module NAME=<name> [ENTITY=<Class>]"; exit 2; }
+	cd $(BACKEND) && PYTHONPATH=src .venv/bin/python scripts/scaffold_module.py \
+	  --name $(NAME) $(if $(ENTITY),--entity $(ENTITY),)
+
 psql: ## Open psql in the postgres container
 	$(COMPOSE) exec postgres psql -U app -d app
 
@@ -143,7 +148,9 @@ fmt: ## ruff autofix + format (backend)
 typecheck: ## mypy (backend)
 	cd $(BACKEND) && PYTHONPATH=src .venv/bin/mypy src
 
-check: lint typecheck test ## Run lint + typecheck + tests
+check: lint typecheck test ## Run lint + typecheck + tests (backend)
+
+ci: check fe-check ## Full CI gate (backend gates + frontend typecheck) — CI entrypoint
 
 # --------------------------------------------------------------------------
 # Frontend
@@ -154,6 +161,9 @@ fe-install: ## Install frontend deps (npm ci)
 
 fe-build: ## Build the frontend production bundle
 	cd frontend && npm run build
+
+fe-check: ## Type-check the frontend without emitting (tsc --noEmit)
+	cd frontend && npx tsc --noEmit
 
 fe-dev: ## Run the Vite dev server
 	cd frontend && npm run dev

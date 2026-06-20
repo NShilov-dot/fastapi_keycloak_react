@@ -28,8 +28,8 @@ async def client() -> AsyncIterator:
     from app.main import create_app
 
     app = create_app()
-    async with LifespanManager(app):
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://testserver"
-        ) as ac:
-            yield ac
+    async with (
+        LifespanManager(app),
+        AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as ac,
+    ):
+        yield ac

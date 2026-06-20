@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     if settings.keycloak_admin_enabled:
-        app.state.keycloak_admin: KeycloakAdminClient | None = KeycloakAdminClient(
+        app.state.keycloak_admin = KeycloakAdminClient(
             issuer=str(settings.keycloak_issuer),
             realm=settings.keycloak_realm,
             client_id=settings.keycloak_admin_client_id,

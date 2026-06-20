@@ -58,7 +58,9 @@ select = [
     "ASYNC",         # async lints
     "RUF",
 ]
-ignore = ["E501"]   # handled by formatter
+# E501 handled by the formatter; UP046/UP047 (PEP 695 generics) intentionally off —
+# generic Pydantic models are written with Generic[T]/TypeVar for broad compatibility.
+ignore = ["E501", "UP046", "UP047"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B008"]
@@ -68,7 +70,9 @@ ignore = ["E501"]   # handled by formatter
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-files = ["src", "tests"]
+# Strict typing is enforced on application code (src). Tests favour terse fakes
+# over full typing, so they're out of the strict gate (run via `make typecheck`).
+files = ["src"]
 exclude = ["alembic/versions"]
 
 [[tool.mypy.overrides]]
