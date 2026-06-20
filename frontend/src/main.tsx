@@ -3,7 +3,6 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider, MutationCache, QueryCache } from '@tanstack/react-query'
 import { BrowserRouter } from 'react-router-dom'
 import { ApiError } from './api/client'
-import { AuthProvider } from './auth/AuthProvider'
 import { getErrorMessage } from './lib/errors'
 import { toast } from 'sonner'
 import { ThemeProvider } from './components/theme-provider'
@@ -53,11 +52,11 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <BrowserRouter>
-        <AuthProvider>
-          <QueryClientProvider client={queryClient}>
-            <App />
-          </QueryClientProvider>
-        </AuthProvider>
+        {/* QueryClient wraps the whole tree so both the public signup page and the
+            authenticated app (gated by AuthProvider inside App) can use queries. */}
+        <QueryClientProvider client={queryClient}>
+          <App />
+        </QueryClientProvider>
       </BrowserRouter>
     </ThemeProvider>
   </StrictMode>,

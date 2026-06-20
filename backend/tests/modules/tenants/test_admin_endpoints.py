@@ -17,7 +17,7 @@ import pytest
 from app.core import deps
 from app.core.security import Principal
 from app.modules.tenants.application.services import MemberInvited, TenantOnboarded
-from app.modules.tenants.interface import router as admin_router
+from app.modules.tenants.interface import providers
 
 _TID = UUID("11111111-1111-1111-1111-111111111111")
 _OTHER = UUID("22222222-2222-2222-2222-222222222222")
@@ -58,7 +58,7 @@ async def _client(*roles: str) -> AsyncIterator[tuple[httpx.AsyncClient, _FakeSe
     app = create_app()
     fake = _FakeService()
     app.dependency_overrides[deps._principal] = lambda: _principal(*roles)
-    app.dependency_overrides[admin_router._provisioning_service] = lambda: fake
+    app.dependency_overrides[providers.provisioning_service] = lambda: fake
     # check_rate_limit needs app.state.rate_limiter (set by the lifespan we skip here);
     # these tests cover RBAC/routing, not throttling, so stub it out.
     app.dependency_overrides[deps.check_rate_limit] = lambda: None

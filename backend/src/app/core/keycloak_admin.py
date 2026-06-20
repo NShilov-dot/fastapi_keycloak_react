@@ -254,6 +254,23 @@ class KeycloakAdminClient:
         """Delete a user by ID (used to compensate a failed provisioning step)."""
         await self._request("DELETE", f"/users/{user_id}", expect={204})
 
+    async def set_user_password(
+        self, user_id: str, password: str, *, temporary: bool = False
+    ) -> None:
+        """Set (reset) a user's password.
+
+        `temporary=False` makes it a permanent credential the user can log in with
+        immediately (used by self-service signup, where the founder picks their own
+        password). Keycloak enforces the realm password policy here and returns 400
+        if the password is rejected — callers map that to a clean WEAK_PASSWORD.
+        """
+        await self._request(
+            "PUT",
+            f"/users/{user_id}/reset-password",
+            json={"type": "password", "value": password, "temporary": temporary},
+            expect={204},
+        )
+
     async def assign_realm_role(self, user_id: str, role_name: str) -> None:
         """Grant a realm role to a user."""
         role = (await self._request("GET", f"/roles/{role_name}")).json()

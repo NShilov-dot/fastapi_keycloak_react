@@ -15,6 +15,7 @@ from app.core.errors import (
     PermissionDeniedError,
     ServiceUnavailableError,
     TenantResolutionError,
+    WeakPasswordError,
 )
 from app.core.keycloak_admin import KeycloakAdminClient, KeycloakAdminError
 from app.modules.tenants.application.services import (
@@ -31,6 +32,8 @@ class _FakeKC:
         self.fail_assign_role = False
         self.fail_email = False
         self.create_conflict = False
+        self.fail_password_policy = False
+        self.passwords: list[tuple[str, str, bool]] = []
         self.deleted: list[str] = []
         self.deleted_groups: list[str] = []
 
@@ -61,6 +64,14 @@ class _FakeKC:
             # Simulate a transport error (httpx.HTTPError-like), NOT a KeycloakAdminError,
             # to exercise the broadened best-effort except.
             raise RuntimeError("connection reset")
+
+    async def set_user_password(
+        self, user_id: str, password: str, *, temporary: bool = False
+    ) -> None:
+        self.calls.append(("set_user_password", user_id, temporary))
+        if self.fail_password_policy:
+            raise KeycloakAdminError(400, "invalidPasswordMinLength")
+        self.passwords.append((user_id, password, temporary))
 
     async def delete_user(self, user_id: str) -> None:
         self.deleted.append(user_id)
@@ -176,8 +187,98 @@ async def test_onboard_compensates_when_a_later_step_fails() -> None:
     with pytest.raises(RuntimeError):
         await svc.onboard_tenant(slug="acme", name="ACME", admin_email="a@b.io")
 
+    assert kc.user_id in kc.deleted  # the created admin user is compensated too
     assert kc.group_id in kc.deleted_groups  # KC group compensated
     assert any("DELETE FROM public.tenants" in sql for sql in session.executed)  # row removed
+
+
+# ---------------------------------------------------------------------------
+# register_tenant (self-service signup)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_register_tenant_happy_path() -> None:
+    kc, session = _FakeKC(), _FakeSession()
+    svc, migrated = _service(kc, session)
+    result = await svc.register_tenant(
+        slug="Acme", name="ACME Corp", admin_email="a@acme.io", admin_password="s3cret-passphrase"
+    )
+
+    assert result.slug == "acme"
+    assert migrated == ["acme"]
+
+    names = [c[0] for c in kc.calls]
+    # Password is set; NO invite email is sent (founder logs in immediately).
+    assert names == ["create_group", "create_user", "set_user_password", "add_user_to_group",
+                     "assign_realm_role"]
+    assert "email" not in names
+
+    create_kw = next(c[1] for c in kc.calls if c[0] == "create_user")
+    assert create_kw["attributes"]["tenant_id"] == [str(result.tenant_id)]
+    assert create_kw["email_verified"] is True       # can log in without SMTP
+    assert create_kw["required_actions"] == []        # no first-login actions
+    # Permanent (non-temporary) password recorded.
+    assert kc.passwords == [(result.admin_user_id, "s3cret-passphrase", False)]
+    assert kc.calls[-1] == ("assign_realm_role", result.admin_user_id, "tenant_admin")
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_reserved_slug() -> None:
+    kc, session = _FakeKC(), _FakeSession()
+    svc, migrated = _service(kc, session)
+    with pytest.raises(InvalidSlugError):
+        await svc.register_tenant(
+            slug="ADMIN", name="x", admin_email="a@b.io", admin_password="s3cret-passphrase"
+        )
+    assert kc.calls == [] and migrated == []  # rejected before any side effect
+
+
+@pytest.mark.asyncio
+async def test_register_duplicate_slug_raises_conflict() -> None:
+    kc = _FakeKC()
+    session = _FakeSession(raise_first=IntegrityError("INSERT", {}, Exception("dup")))
+    svc, migrated = _service(kc, session)
+    with pytest.raises(ConflictError):
+        await svc.register_tenant(
+            slug="acme", name="ACME", admin_email="a@b.io", admin_password="s3cret-passphrase"
+        )
+    assert session.rolled_back == 1
+    assert kc.calls == [] and migrated == []
+
+
+@pytest.mark.asyncio
+async def test_register_weak_password_maps_to_400_and_compensates() -> None:
+    """A policy rejection on set-password deletes the half-created user AND
+    compensates the tenant (group + row), then surfaces a clean 400."""
+    kc = _FakeKC()
+    kc.fail_password_policy = True
+    session = _FakeSession()
+    svc, migrated = _service(kc, session)
+    with pytest.raises(WeakPasswordError):
+        await svc.register_tenant(
+            slug="acme", name="ACME", admin_email="a@b.io", admin_password="tooweak12345"
+        )
+    assert kc.deleted == [kc.user_id]              # user rolled back
+    assert kc.group_id in kc.deleted_groups        # tenant compensated
+    assert migrated == []                          # schema migration never ran (cheap failure first)
+    assert any("DELETE FROM public.tenants" in sql for sql in session.executed)
+
+
+@pytest.mark.asyncio
+async def test_register_duplicate_email_is_conflict() -> None:
+    kc = _FakeKC()
+    kc.create_conflict = True  # email already taken realm-wide
+    session = _FakeSession()
+    svc, migrated = _service(kc, session)
+    with pytest.raises(ConflictError):
+        await svc.register_tenant(
+            slug="acme", name="ACME", admin_email="taken@b.io", admin_password="s3cret-passphrase"
+        )
+    assert kc.deleted == []  # user was never created
+    assert migrated == []    # expensive schema migration never ran (dup-email fails first)
+    # Tenant row + group are compensated so the slug can be retried.
+    assert kc.group_id in kc.deleted_groups
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,7 @@ endif
 .PHONY: help env env-prod gen-key tls-dev-cert \
         up down restart build logs ps clean config \
         prod-up prod-down prod-restart prod-build prod-logs prod-ps prod-migrate \
-        migrate revision psql redis-cli backend-shell \
+        migrate seed-demo revision psql redis-cli backend-shell \
         test lint fmt typecheck check fe-install fe-build fe-dev dev-backend
 
 help: ## Show this help
@@ -108,6 +108,12 @@ prod-migrate: ## Apply public migrations in the production stack
 
 migrate: ## Apply public-schema migrations (two-head setup: public + tenant)
 	$(COMPOSE) exec app alembic -x scope=public upgrade public@head
+
+seed-demo: ## Seed the demo tenant (matches the realm-export `demo` user) so /v1/tasks works
+	$(COMPOSE) exec -T postgres psql -U app -d app -c \
+	  "INSERT INTO public.tenants (id, slug, name) VALUES ('11111111-1111-1111-1111-111111111111','demo','Demo Org') ON CONFLICT DO NOTHING;"
+	$(COMPOSE) exec -T app alembic -x scope=tenant -x schema=tenant_demo upgrade tenant@head
+	@echo "Demo tenant seeded. Login as demo/demo at http://localhost:3000"
 
 revision: ## Autogenerate a migration: make revision m="message"
 	$(COMPOSE) exec app alembic revision --autogenerate -m "$(m)"

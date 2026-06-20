@@ -289,6 +289,26 @@ async def test_delete_user() -> None:
     assert route.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_set_user_password() -> None:
+    route = _Route("PUT", f"{_ADMIN_BASE_PART}/users/u1/reset-password", 204)
+    kc, _ = _client(route)
+    await kc.set_user_password("u1", "correct horse battery staple")
+    assert route.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_set_user_password_policy_rejection_raises_400() -> None:
+    # Keycloak returns 400 when the realm password policy rejects the value.
+    route = _Route(
+        "PUT", f"{_ADMIN_BASE_PART}/users/u1/reset-password", 400, text="invalidPasswordMinLength"
+    )
+    kc, _ = _client(route)
+    with pytest.raises(KeycloakAdminError) as exc_info:
+        await kc.set_user_password("u1", "short")
+    assert exc_info.value.status_code == 400
+
+
 # ---------------------------------------------------------------------------
 # TenantGroupSpec helper
 # ---------------------------------------------------------------------------

@@ -108,6 +108,18 @@ class Settings(BaseSettings):
     rate_limit_tenant_per_minute: int = 6_000
     # Unauthenticated / pre-auth endpoints (login, callback), keyed by client IP.
     rate_limit_auth_per_minute_per_ip: int = 20
+    # Self-service signup is unauthenticated AND expensive (Keycloak group+user +
+    # a per-tenant schema migration subprocess), so it gets a much stricter, longer
+    # window cap keyed by client IP — on top of the per-minute auth burst limit.
+    rate_limit_signup_per_hour_per_ip: int = 5
+    # Aggregate ceiling across ALL IPs per hour (0 disables). Backstop against
+    # distributed sources (botnet / proxy pool / IPv6 /64) that stay under the
+    # per-IP cap yet multiply total provisioning cost linearly.
+    rate_limit_signup_global_per_hour: int = 50
+
+    # Public self-service company registration (POST /v1/signup). Disable for a
+    # sales-led / invite-only deployment so tenants are created only by an operator.
+    signup_enabled: bool = True
 
     # Maximum allowed request body size in bytes (default 1 MB)
     max_body_size_bytes: int = 1_048_576

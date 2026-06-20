@@ -10,6 +10,7 @@ invite_member   — add an employee to an EXISTING tenant. The tenant_id is take
 
 from __future__ import annotations
 
+import asyncio
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -26,12 +27,23 @@ from app.core.errors import (
     PermissionDeniedError,
     ServiceUnavailableError,
     TenantResolutionError,
+    WeakPasswordError,
 )
 from app.core.keycloak_admin import KeycloakAdminClient, KeycloakAdminError, TenantGroupSpec
 
 logger = structlog.get_logger(__name__)
 
 _SLUG_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
+# Slugs an anonymous self-service signup may NOT claim: operational names and the
+# seeded demo tenant. Squatting these would let a stranger occupy a confusing or
+# privileged-looking schema/group name. Platform-admin onboarding is unrestricted.
+_RESERVED_SLUGS = frozenset(
+    {
+        "admin", "api", "app", "auth", "demo", "internal", "keycloak", "platform",
+        "public", "root", "saas", "static", "status", "support", "system",
+        "tenant", "tenants", "www",
+    }
+)
 # Required actions stamped on every new member so they must set a password (and
 # verify email) on first login — independent of whether the invite email sends.
 _MEMBER_REQUIRED_ACTIONS = ["UPDATE_PASSWORD", "VERIFY_EMAIL"]
@@ -40,6 +52,14 @@ _MEMBER_REQUIRED_ACTIONS = ["UPDATE_PASSWORD", "VERIFY_EMAIL"]
 _TENANT_GRANTABLE_ROLES = frozenset({"tenant_user", "tenant_admin"})
 
 SchemaMigrator = Callable[[str], Awaitable[None]]
+
+# Cap concurrent provisioning sagas process-wide. Each one forks an alembic
+# subprocess and opens a direct (NullPool) Postgres connection outside the app pool,
+# so without a ceiling a burst of concurrent signups could exhaust processes / DB
+# connections regardless of the per-IP rate limits. Shared across all service
+# instances (they are constructed per-request via DI).
+_MAX_CONCURRENT_PROVISIONS = 4
+_PROVISION_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_PROVISIONS)
 
 
 class InvalidSlugError(DomainError):
@@ -83,6 +103,42 @@ class TenantProvisioningService:
     async def onboard_tenant(
         self, *, slug: str, name: str, admin_email: str
     ) -> TenantOnboarded:
+        """Platform-admin onboarding: the first admin gets an invite email and must
+        set a password / verify email on first login (no password is supplied here)."""
+
+        async def _provision(tenant_id: UUID, group_id: str) -> str:
+            return await self._provision_member(
+                tenant_id=tenant_id, group_id=group_id, email=admin_email, roles=["tenant_admin"]
+            )
+
+        return await self._onboard(slug=slug, name=name, provision_admin=_provision)
+
+    async def register_tenant(
+        self, *, slug: str, name: str, admin_email: str, admin_password: str
+    ) -> TenantOnboarded:
+        """Self-service signup: the founder picks their own password and can log in
+        immediately. Same provisioning saga as onboard_tenant, but the admin user is
+        created with a permanent password (no invite email / first-login actions).
+
+        Reserved slugs are rejected here (but not for platform-admin onboarding),
+        since this entry point is reachable by anonymous callers."""
+        if slug.strip().lower() in _RESERVED_SLUGS:
+            raise InvalidSlugError(f"slug '{slug.strip().lower()}' is reserved")
+
+        async def _provision(tenant_id: UUID, group_id: str) -> str:
+            return await self._provision_admin_with_password(
+                tenant_id=tenant_id, group_id=group_id, email=admin_email, password=admin_password
+            )
+
+        return await self._onboard(slug=slug, name=name, provision_admin=_provision)
+
+    async def _onboard(
+        self,
+        *,
+        slug: str,
+        name: str,
+        provision_admin: Callable[[UUID, str], Awaitable[str]],
+    ) -> TenantOnboarded:
         slug = slug.strip().lower()
         if not _SLUG_RE.fullmatch(slug):
             raise InvalidSlugError(f"slug must match {_SLUG_RE.pattern}")
@@ -105,32 +161,44 @@ class TenantProvisioningService:
                 raise ConflictError(f"Tenant slug '{slug}' already exists") from exc
 
         # Steps 2-4 happen after the row is committed; if any fails we compensate
-        # (delete the group + the registry row) so a stuck half-provisioned tenant
-        # doesn't block re-onboarding the same slug.
+        # (delete the user + group + the registry row) so a stuck half-provisioned
+        # tenant doesn't block re-onboarding the same slug. The whole side-effecting
+        # saga is bounded by a semaphore so a burst of concurrent signups can't fork
+        # an unbounded number of alembic subprocesses / open uncounted DB connections.
         group_id: str | None = None
-        try:
-            # 2. Keycloak group carrying the tenant_id attribute.
-            spec = TenantGroupSpec(tenant_slug=slug, tenant_id=str(tenant_id))
-            group_id = await self._kc.create_group(spec.group_name, attributes=spec.attributes)
-            async with self._sm() as session:
-                await session.execute(
-                    text("UPDATE public.tenants SET keycloak_group_id = :gid WHERE id = :id"),
-                    {"gid": group_id, "id": tenant_id},
+        admin_user_id: str | None = None
+        async with _PROVISION_SEMAPHORE:
+            try:
+                # 2. Keycloak group carrying the tenant_id attribute.
+                spec = TenantGroupSpec(tenant_slug=slug, tenant_id=str(tenant_id))
+                group_id = await self._kc.create_group(
+                    spec.group_name, attributes=spec.attributes
                 )
-                await session.commit()
+                async with self._sm() as session:
+                    await session.execute(
+                        text("UPDATE public.tenants SET keycloak_group_id = :gid WHERE id = :id"),
+                        {"gid": group_id, "id": tenant_id},
+                    )
+                    await session.commit()
 
-            # 3. Tenant Postgres schema (tasks tables, etc.). Idempotent
-            #    (CREATE SCHEMA IF NOT EXISTS + versioned alembic), so it's safe to
-            #    re-run on a later re-onboard.
-            await self._migrate_schema(slug)
+                # 3. First admin user (strategy supplied by the caller). Done BEFORE
+                #    the expensive schema migration so the cheap, attacker-forcible
+                #    failures (duplicate email -> 409, weak password -> 400) fail fast
+                #    and never leave behind an orphaned migrated schema.
+                admin_user_id = await provision_admin(tenant_id, group_id)
 
-            # 4. First admin user.
-            admin_user_id = await self._provision_member(
-                tenant_id=tenant_id, group_id=group_id, email=admin_email, roles=["tenant_admin"]
-            )
-        except Exception:
-            await self._compensate_onboard(tenant_id=tenant_id, group_id=group_id, slug=slug)
-            raise
+                # 4. Tenant Postgres schema (tasks tables, etc.). Idempotent
+                #    (CREATE SCHEMA IF NOT EXISTS + versioned alembic), so it's safe to
+                #    re-run on a later re-onboard.
+                await self._migrate_schema(slug)
+            except Exception:
+                await self._compensate_onboard(
+                    tenant_id=tenant_id,
+                    group_id=group_id,
+                    slug=slug,
+                    admin_user_id=admin_user_id,
+                )
+                raise
 
         logger.info(
             "tenant.onboarded", tenant_id=str(tenant_id), slug=slug, admin_user_id=admin_user_id
@@ -140,14 +208,18 @@ class TenantProvisioningService:
         )
 
     async def _compensate_onboard(
-        self, *, tenant_id: UUID, group_id: str | None, slug: str
+        self, *, tenant_id: UUID, group_id: str | None, slug: str, admin_user_id: str | None = None
     ) -> None:
         """Best-effort rollback of a partially-provisioned tenant.
 
-        Removes the Keycloak group and the public.tenants row. The tenant schema
-        is left as-is — it's idempotent and reused on a successful re-onboard.
+        Removes the admin user (if one was created), the Keycloak group, and the
+        public.tenants row. The tenant schema is left as-is — it's idempotent and
+        reused on a successful re-onboard (and with the user provisioned before the
+        migration, a schema only exists here on a rare post-user infra failure).
         """
         logger.warning("tenant.onboard_compensating", tenant_id=str(tenant_id), slug=slug)
+        if admin_user_id is not None:
+            await self._safe_delete_user(admin_user_id)
         if group_id is not None:
             try:
                 await self._kc.delete_group(group_id)
@@ -238,6 +310,44 @@ class TenantProvisioningService:
             )
         except Exception as exc:
             logger.warning("tenant.invite_email_failed", user_id=user_id, error=str(exc))
+        return user_id
+
+    async def _provision_admin_with_password(
+        self, *, tenant_id: UUID, group_id: str, email: str, password: str
+    ) -> str:
+        """Create the founding admin for a self-service signup with a permanent
+        password and a pre-verified email, so they can log in straight away."""
+        try:
+            user_id = await self._kc.create_user(
+                username=email,
+                email=email,
+                attributes={"tenant_id": [str(tenant_id)]},
+                required_actions=[],  # founder sets the password now — no first-login actions
+                enabled=True,
+                # No SMTP in this deployment; mark verified so login isn't blocked.
+                # (Production should add email verification — see security notes.)
+                email_verified=True,
+            )
+        except KeycloakAdminError as exc:
+            if exc.status_code == 409:
+                raise ConflictError("A user with this email already exists") from exc
+            raise
+
+        try:
+            # Set the password first — most likely step to be rejected (policy).
+            await self._kc.set_user_password(user_id, password, temporary=False)
+        except KeycloakAdminError as exc:
+            await self._safe_delete_user(user_id)
+            if exc.status_code == 400:
+                raise WeakPasswordError("Password does not meet the required policy") from exc
+            raise
+
+        try:
+            await self._kc.add_user_to_group(user_id, group_id)
+            await self._kc.assign_realm_role(user_id, "tenant_admin")
+        except Exception:
+            await self._safe_delete_user(user_id)
+            raise
         return user_id
 
     async def _safe_delete_user(self, user_id: str) -> None:

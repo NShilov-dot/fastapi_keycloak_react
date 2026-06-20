@@ -52,3 +52,10 @@ class CsrfError(DomainError):
 class ConflictError(DomainError):
     code = "CONFLICT"
     http_status = 409
+
+
+class WeakPasswordError(DomainError):
+    """The supplied password was rejected by the realm's password policy."""
+
+    code = "WEAK_PASSWORD"
+    http_status = 400

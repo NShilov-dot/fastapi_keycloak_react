@@ -12,21 +12,15 @@ tenant_user / tenant_admin — a tenant_admin cannot mint a platform_admin.
 
 from __future__ import annotations
 
-from typing import Annotated
-
 from fastapi import APIRouter, Depends, status
 
-from app.core.db import get_sessionmaker
 from app.core.deps import (
-    KeycloakAdminDep,
     PrincipalDep,
-    SettingsDep,
     check_csrf,
     check_rate_limit,
     require_roles,
 )
-from app.modules.tenants.application.services import TenantProvisioningService
-from app.modules.tenants.infrastructure.schema_migrator import run_tenant_migrations
+from app.modules.tenants.interface.providers import ProvisioningDep
 from app.modules.tenants.interface.schemas import (
     CreateTenantRequest,
     InviteMemberRequest,
@@ -42,20 +36,6 @@ router = APIRouter(
     # the Origin/Referer allowlist on these writes.
     dependencies=[Depends(check_rate_limit), Depends(check_csrf)],
 )
-
-
-def _provisioning_service(
-    kc: KeycloakAdminDep, settings: SettingsDep
-) -> TenantProvisioningService:
-    return TenantProvisioningService(
-        sessionmaker=get_sessionmaker(),
-        kc=kc,
-        migrate_schema=run_tenant_migrations,
-        invite_client_id=settings.oidc_client_id,
-    )
-
-
-ProvisioningDep = Annotated[TenantProvisioningService, Depends(_provisioning_service)]
 
 
 @router.post(

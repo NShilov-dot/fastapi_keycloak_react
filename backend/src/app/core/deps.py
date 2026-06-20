@@ -292,6 +292,41 @@ async def check_anon_rate_limit(
 AnonRateLimitDep = Annotated[None, Depends(check_anon_rate_limit)]
 
 
+async def check_signup_rate_limit(
+    request: Request,
+    limiter: RateLimiterDep,
+    settings: SettingsDep,
+) -> None:
+    """Strict per-IP cap for self-service signup, over a 1-hour window.
+
+    Signup is unauthenticated and triggers expensive provisioning (a Keycloak
+    group + user and a per-tenant schema migration), so it needs a tighter, longer
+    ceiling than the per-minute auth burst limit it is layered on top of. Fail-closed:
+    an unavailable Redis must not turn signup into an unbounded provisioning amplifier.
+    """
+    ip = client_ip(request)
+    if not await limiter.allow(
+        f"signup:{ip}",
+        limit=settings.rate_limit_signup_per_hour_per_ip,
+        window_seconds=3600,
+        fail_closed=True,
+    ):
+        raise RateLimitError("Too many signup attempts. Please try again later.")
+
+    # Aggregate backstop across all IPs — distributed sources each stay under the
+    # per-IP cap but together could still flood the expensive provisioning saga.
+    if settings.rate_limit_signup_global_per_hour > 0 and not await limiter.allow(
+        "signup:global",
+        limit=settings.rate_limit_signup_global_per_hour,
+        window_seconds=3600,
+        fail_closed=True,
+    ):
+        raise RateLimitError("Signups are temporarily unavailable. Please try again later.")
+
+
+SignupRateLimitDep = Annotated[None, Depends(check_signup_rate_limit)]
+
+
 async def check_csrf(request: Request, settings: SettingsDep) -> None:
     """Defense-in-depth CSRF check for cookie-authenticated, state-changing requests.
 
