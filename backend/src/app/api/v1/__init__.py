@@ -1,8 +1,8 @@
 from fastapi import APIRouter
 
 from app.api.v1 import auth, health, signup
-from app.modules.tasks.interface.router import router as tasks_router
-from app.modules.tenants.interface.router import router as admin_router
+from app.api.v1.admin import router as admin_router
+from app.api.v1.tasks import router as tasks_router
 
 router = APIRouter(prefix="/v1")
 router.include_router(health.router)

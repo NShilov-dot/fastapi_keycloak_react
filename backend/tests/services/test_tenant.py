@@ -18,7 +18,7 @@ from app.core.errors import (
     WeakPasswordError,
 )
 from app.core.keycloak_admin import KeycloakAdminClient, KeycloakAdminError
-from app.modules.tenants.application.services import (
+from app.services.tenant import (
     InvalidSlugError,
     TenantProvisioningService,
 )
@@ -216,11 +216,55 @@ async def test_register_tenant_happy_path() -> None:
 
     create_kw = next(c[1] for c in kc.calls if c[0] == "create_user")
     assert create_kw["attributes"]["tenant_id"] == [str(result.tenant_id)]
-    assert create_kw["email_verified"] is True       # can log in without SMTP
-    assert create_kw["required_actions"] == []        # no first-login actions
+    # [M-1] Founder is NEVER marked verified (self-service proves no email ownership).
+    assert create_kw["email_verified"] is False
+    # Verification off by default → no forced first-login action, immediate login.
+    assert create_kw["required_actions"] == []
     # Permanent (non-temporary) password recorded.
     assert kc.passwords == [(result.admin_user_id, "s3cret-passphrase", False)]
     assert kc.calls[-1] == ("assign_realm_role", result.admin_user_id, "tenant_admin")
+
+
+@pytest.mark.asyncio
+async def test_register_tenant_requires_email_verification() -> None:  # [M-1]
+    """With require_email_verification=True (SMTP available), the founder is created
+    unverified with a VERIFY_EMAIL action and a verification email is sent."""
+    kc, session = _FakeKC(), _FakeSession()
+    svc, _ = _service(kc, session)
+    result = await svc.register_tenant(
+        slug="acme",
+        name="ACME Corp",
+        admin_email="a@acme.io",
+        admin_password="s3cret-passphrase",
+        require_email_verification=True,
+    )
+
+    create_kw = next(c[1] for c in kc.calls if c[0] == "create_user")
+    assert create_kw["email_verified"] is False  # still never asserted
+    assert create_kw["required_actions"] == ["VERIFY_EMAIL"]
+    # A verification email is sent for the VERIFY_EMAIL action.
+    assert ("email", result.admin_user_id, ["VERIFY_EMAIL"]) in kc.calls
+    # Founder's chosen password is still set (permanent credential).
+    assert kc.passwords == [(result.admin_user_id, "s3cret-passphrase", False)]
+
+
+@pytest.mark.asyncio
+async def test_register_verify_email_failure_is_best_effort() -> None:  # [M-1]
+    """A failed verification email (transport error) must not fail or orphan the
+    otherwise-complete signup — the VERIFY_EMAIL action is already on the user."""
+    kc = _FakeKC()
+    kc.fail_email = True
+    session = _FakeSession()
+    svc, _ = _service(kc, session)
+    result = await svc.register_tenant(
+        slug="acme",
+        name="ACME Corp",
+        admin_email="a@acme.io",
+        admin_password="s3cret-passphrase",
+        require_email_verification=True,
+    )
+    assert result.slug == "acme"       # signup still succeeds
+    assert kc.deleted == []            # user NOT rolled back on email failure
 
 
 @pytest.mark.asyncio

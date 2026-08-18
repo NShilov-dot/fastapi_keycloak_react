@@ -14,10 +14,10 @@ from uuid import UUID
 import httpx
 import pytest
 
+from app.api import deps as providers
 from app.core import deps
 from app.core.security import Principal
-from app.modules.tenants.application.services import MemberInvited, TenantOnboarded
-from app.modules.tenants.interface import providers
+from app.services.tenant import MemberInvited, TenantOnboarded
 
 _TID = UUID("11111111-1111-1111-1111-111111111111")
 _OTHER = UUID("22222222-2222-2222-2222-222222222222")

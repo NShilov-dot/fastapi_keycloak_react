@@ -23,6 +23,7 @@ from __future__ import annotations
 import structlog
 from fastapi import APIRouter, Depends, status
 
+from app.api.deps import ProvisioningDep
 from app.core.deps import (
     SettingsDep,
     check_anon_rate_limit,
@@ -30,8 +31,7 @@ from app.core.deps import (
     check_signup_rate_limit,
 )
 from app.core.errors import NotFoundError
-from app.modules.tenants.interface.providers import ProvisioningDep
-from app.modules.tenants.interface.schemas import SignupRequest, SignupResponse
+from app.schemas.tenant import SignupRequest, SignupResponse
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["signup"])
@@ -59,6 +59,7 @@ async def signup(
         name=body.company_name,
         admin_email=str(body.admin_email),
         admin_password=body.admin_password.get_secret_value(),
+        require_email_verification=settings.signup_require_email_verification,
     )
     logger.info("signup.completed", tenant_id=str(result.tenant_id), slug=result.slug)
     return SignupResponse(

@@ -6,6 +6,10 @@ onboard_tenant  — register a new organization (tenant): public.tenants row →
 invite_member   — add an employee to an EXISTING tenant. The tenant_id is taken
                   from the caller's principal at the interface layer, never from
                   client input, so a tenant_admin can only add to their own tenant.
+
+This is a multi-step saga across Keycloak + Postgres (+ an Alembic subprocess),
+so — unlike the request-scoped CRUD services — it owns its own sessions and
+commits explicitly and compensates on partial failure.
 """
 
 from __future__ import annotations
@@ -61,6 +65,43 @@ SchemaMigrator = Callable[[str], Awaitable[None]]
 _MAX_CONCURRENT_PROVISIONS = 4
 _PROVISION_SEMAPHORE = asyncio.Semaphore(_MAX_CONCURRENT_PROVISIONS)
 
+# Bound the schema migration so a hung/slow Alembic run can't block the request forever.
+_MIGRATION_TIMEOUT_SECONDS = 120
+
+
+async def run_tenant_migrations(slug: str) -> None:
+    """Create a tenant's Postgres schema by running the Alembic `tenant` head.
+
+    Shells out to Alembic (the same mechanism scripts/provision_tenant.py uses) so the
+    per-tenant schema is versioned in `alembic_version_tenant`. Runs in the app
+    container's working directory, where alembic.ini lives. Tenant onboarding is
+    infrequent, so awaiting a short subprocess in the request is acceptable; for very
+    high volume this would move to a background job.
+    """
+    schema = f"tenant_{slug}"
+    proc = await asyncio.create_subprocess_exec(
+        "alembic",
+        "-x", "scope=tenant",
+        "-x", f"schema={schema}",
+        "upgrade", "tenant@head",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await asyncio.wait_for(
+            proc.communicate(), timeout=_MIGRATION_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()  # reap so we don't leak a zombie
+        logger.error("tenant.schema_migration_timeout", schema=schema)
+        raise RuntimeError(f"tenant schema migration timed out for {schema}") from None
+    if proc.returncode != 0:
+        detail = out.decode(errors="replace")[-800:] if out else ""
+        logger.error("tenant.schema_migration_failed", schema=schema, detail=detail)
+        raise RuntimeError(f"tenant schema migration failed for {schema}")
+    logger.info("tenant.schema_migrated", schema=schema)
+
 
 class InvalidSlugError(DomainError):
     code = "INVALID_SLUG"
@@ -114,11 +155,19 @@ class TenantProvisioningService:
         return await self._onboard(slug=slug, name=name, provision_admin=_provision)
 
     async def register_tenant(
-        self, *, slug: str, name: str, admin_email: str, admin_password: str
+        self,
+        *,
+        slug: str,
+        name: str,
+        admin_email: str,
+        admin_password: str,
+        require_email_verification: bool = False,
     ) -> TenantOnboarded:
-        """Self-service signup: the founder picks their own password and can log in
-        immediately. Same provisioning saga as onboard_tenant, but the admin user is
-        created with a permanent password (no invite email / first-login actions).
+        """Self-service signup: the founder picks their own password. The admin user is
+        always created email_verified=False (self-service proves no email ownership).
+        When require_email_verification is set (SMTP available) the VERIFY_EMAIL required
+        action is stamped and a verification email is sent, so the founder must confirm
+        the address on first login; otherwise they can log in immediately.
 
         Reserved slugs are rejected here (but not for platform-admin onboarding),
         since this entry point is reachable by anonymous callers."""
@@ -127,7 +176,11 @@ class TenantProvisioningService:
 
         async def _provision(tenant_id: UUID, group_id: str) -> str:
             return await self._provision_admin_with_password(
-                tenant_id=tenant_id, group_id=group_id, email=admin_email, password=admin_password
+                tenant_id=tenant_id,
+                group_id=group_id,
+                email=admin_email,
+                password=admin_password,
+                require_email_verification=require_email_verification,
             )
 
         return await self._onboard(slug=slug, name=name, provision_admin=_provision)
@@ -313,20 +366,32 @@ class TenantProvisioningService:
         return user_id
 
     async def _provision_admin_with_password(
-        self, *, tenant_id: UUID, group_id: str, email: str, password: str
+        self,
+        *,
+        tenant_id: UUID,
+        group_id: str,
+        email: str,
+        password: str,
+        require_email_verification: bool,
     ) -> str:
-        """Create the founding admin for a self-service signup with a permanent
-        password and a pre-verified email, so they can log in straight away."""
+        """Create the founding admin for a self-service signup with a permanent,
+        founder-chosen password.
+
+        The user is ALWAYS created email_verified=False — signup proves no email
+        ownership, so we never assert it. When require_email_verification is set (SMTP
+        available), we also stamp the VERIFY_EMAIL required action and send the
+        verification link, forcing confirmation on first login; otherwise the founder
+        can log in immediately (the realm's verifyEmail stays off)."""
+        required_actions = ["VERIFY_EMAIL"] if require_email_verification else []
         try:
             user_id = await self._kc.create_user(
                 username=email,
                 email=email,
                 attributes={"tenant_id": [str(tenant_id)]},
-                required_actions=[],  # founder sets the password now — no first-login actions
+                required_actions=required_actions,
                 enabled=True,
-                # No SMTP in this deployment; mark verified so login isn't blocked.
-                # (Production should add email verification — see security notes.)
-                email_verified=True,
+                # Never claim a verified email we haven't proven ownership of.
+                email_verified=False,
             )
         except KeycloakAdminError as exc:
             if exc.status_code == 409:
@@ -348,6 +413,17 @@ class TenantProvisioningService:
         except Exception:
             await self._safe_delete_user(user_id)
             raise
+
+        # Best-effort verification email (only when required + SMTP configured). A
+        # failed/missing SMTP transport must not fail or orphan an otherwise-complete
+        # signup — the VERIFY_EMAIL required action is already on the user regardless.
+        if require_email_verification:
+            try:
+                await self._kc.send_execute_actions_email(
+                    user_id, ["VERIFY_EMAIL"], client_id=self._invite_client_id
+                )
+            except Exception as exc:
+                logger.warning("signup.verify_email_failed", user_id=user_id, error=str(exc))
         return user_id
 
     async def _safe_delete_user(self, user_id: str) -> None:

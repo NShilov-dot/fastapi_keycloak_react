@@ -19,8 +19,8 @@ from app.config import get_settings
 from app.core.db import Base
 
 # Import model modules so their tables register on Base.metadata
-import app.modules.tenants.models  # noqa: F401  (public schema)
-import app.modules.tasks.infrastructure.models  # noqa: F401  (tenant schema)
+import app.models.tenant  # noqa: F401  (public schema)
+import app.models.task  # noqa: F401  (tenant schema)
 
 
 config = context.config

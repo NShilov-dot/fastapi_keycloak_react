@@ -13,10 +13,10 @@ from uuid import UUID
 import httpx
 import pytest
 
+from app.api import deps as providers
 from app.core import deps
 from app.core.errors import ConflictError, WeakPasswordError
-from app.modules.tenants.application.services import TenantOnboarded
-from app.modules.tenants.interface import providers
+from app.services.tenant import TenantOnboarded
 
 _TID = UUID("33333333-3333-3333-3333-333333333333")
 
@@ -34,10 +34,22 @@ class _FakeService:
         self._raises = raises
 
     async def register_tenant(
-        self, *, slug: str, name: str, admin_email: str, admin_password: str
+        self,
+        *,
+        slug: str,
+        name: str,
+        admin_email: str,
+        admin_password: str,
+        require_email_verification: bool = False,
     ) -> TenantOnboarded:
         self.calls.append(
-            {"slug": slug, "name": name, "email": admin_email, "password": admin_password}
+            {
+                "slug": slug,
+                "name": name,
+                "email": admin_email,
+                "password": admin_password,
+                "verify": require_email_verification,
+            }
         )
         if self._raises is not None:
             raise self._raises
@@ -84,6 +96,7 @@ async def test_signup_creates_tenant() -> None:
                 "name": "ACME Corp",
                 "email": "founder@acme.io",
                 "password": "correct horse battery staple",
+                "verify": False,  # SIGNUP_REQUIRE_EMAIL_VERIFICATION defaults off
             }
         ]
 

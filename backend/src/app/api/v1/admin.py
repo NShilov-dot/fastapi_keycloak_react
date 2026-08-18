@@ -14,14 +14,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, status
 
+from app.api.deps import ProvisioningDep
 from app.core.deps import (
     PrincipalDep,
     check_csrf,
     check_rate_limit,
     require_roles,
 )
-from app.modules.tenants.interface.providers import ProvisioningDep
-from app.modules.tenants.interface.schemas import (
+from app.schemas.tenant import (
     CreateTenantRequest,
     InviteMemberRequest,
     MemberInvitedResponse,
