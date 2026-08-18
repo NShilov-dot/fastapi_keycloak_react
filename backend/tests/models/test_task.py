@@ -5,8 +5,8 @@ from uuid import uuid4
 
 import pytest
 
-from app.modules.tasks.domain.entities import Task, TaskPriority, TaskStatus
-from app.modules.tasks.domain.errors import TaskTransitionError, TaskValidationError
+from app.core.errors import TaskTransitionError, TaskValidationError
+from app.models.task import Task, TaskPriority, TaskStatus
 
 
 def _make_task(**overrides) -> Task:

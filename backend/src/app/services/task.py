@@ -3,21 +3,63 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import NamedTuple
 from uuid import UUID
 
-from app.modules.tasks.application.dtos import (
-    CreateTaskCommand,
-    ListTasksQuery,
-    Page,
-    UpdateTaskCommand,
-)
-from app.modules.tasks.domain.entities import Task
-from app.modules.tasks.domain.errors import TaskAccessDeniedError, TaskNotFoundError
-from app.modules.tasks.domain.ports import TaskRepository
+from app.core.errors import TaskAccessDeniedError, TaskNotFoundError
+from app.models.task import Task, TaskPriority, TaskStatus
+from app.repositories.task import TaskRepository
 
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+# --- Commands / queries -----------------------------------------------------
+# Plain dataclasses the interface layer builds from the Pydantic request. They
+# carry the partial-update semantics (`*_set` flags distinguish "leave alone"
+# from "set to null"), which is why they earn their keep as a small layer.
+
+
+@dataclass(slots=True, kw_only=True)
+class CreateTaskCommand:
+    title: str
+    description: str | None = None
+    priority: TaskPriority = TaskPriority.MEDIUM
+    due_at: datetime | None = None
+
+
+@dataclass(slots=True, kw_only=True)
+class UpdateTaskCommand:
+    """Partial update. For nullable fields, the `*_set` flag MUST be true to
+    apply the value — that lets the caller distinguish "leave alone" from
+    "set to null". The interface layer translates `fields_set` from the
+    Pydantic request body into these flags.
+    """
+
+    title: str | None = None
+    description: str | None = None
+    description_set: bool = False
+    priority: TaskPriority | None = None
+    due_at: datetime | None = None
+    due_at_set: bool = False
+
+
+@dataclass(slots=True, kw_only=True)
+class ListTasksQuery:
+    status: TaskStatus | None = None
+    limit: int = 20
+    offset: int = 0
+
+
+class Page(NamedTuple):
+    items: list[Task]
+    total: int
+    limit: int
+    offset: int
+
+
+# --- Service ----------------------------------------------------------------
 
 
 @dataclass(slots=True)

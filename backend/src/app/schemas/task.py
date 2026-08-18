@@ -6,12 +6,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.tasks.application.dtos import (
-    CreateTaskCommand,
-    Page,
-    UpdateTaskCommand,
-)
-from app.modules.tasks.domain.entities import Task, TaskPriority, TaskStatus
+from app.models.task import Task, TaskPriority, TaskStatus
+from app.services.task import CreateTaskCommand, Page, UpdateTaskCommand
 
 T = TypeVar("T")
 
@@ -68,7 +64,7 @@ class TaskResponse(BaseModel):
     completed_at: datetime | None
 
     @classmethod
-    def from_entity(cls, task: Task) -> TaskResponse:
+    def from_model(cls, task: Task) -> TaskResponse:
         return cls.model_validate(task)
 
 
@@ -89,6 +85,6 @@ class PagedEnvelope(BaseModel, Generic[T]):
     @classmethod
     def from_page(cls, page: Page) -> PagedEnvelope[TaskResponse]:
         return PagedEnvelope[TaskResponse](
-            data=[TaskResponse.from_entity(t) for t in page.items],
+            data=[TaskResponse.from_model(t) for t in page.items],
             meta=PageMeta(total=page.total, limit=page.limit, offset=page.offset),
         )

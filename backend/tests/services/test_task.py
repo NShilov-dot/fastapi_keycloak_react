@@ -12,14 +12,14 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.modules.tasks.application.dtos import (
+from app.core.errors import TaskAccessDeniedError, TaskNotFoundError
+from app.models.task import Task, TaskPriority, TaskStatus
+from app.services.task import (
     CreateTaskCommand,
     ListTasksQuery,
+    TaskService,
     UpdateTaskCommand,
 )
-from app.modules.tasks.application.services import TaskService
-from app.modules.tasks.domain.entities import Task, TaskPriority, TaskStatus
-from app.modules.tasks.domain.errors import TaskAccessDeniedError, TaskNotFoundError
 
 
 class FakeRepo:

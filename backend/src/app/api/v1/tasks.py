@@ -5,19 +5,18 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
-from app.core.deps import PrincipalDep, SessionDep, check_csrf, check_rate_limit
+from app.api.deps import TaskServiceDep
+from app.core.deps import PrincipalDep, check_csrf, check_rate_limit
 from app.core.security import AuthError, Principal
-from app.modules.tasks.application.dtos import ListTasksQuery
-from app.modules.tasks.application.services import TaskService
-from app.modules.tasks.domain.entities import TaskStatus
-from app.modules.tasks.infrastructure.repositories import SqlAlchemyTaskRepository
-from app.modules.tasks.interface.schemas import (
+from app.models.task import TaskStatus
+from app.schemas.task import (
     CreateTaskRequest,
     Envelope,
     PagedEnvelope,
     TaskResponse,
     UpdateTaskRequest,
 )
+from app.services.task import ListTasksQuery
 
 router = APIRouter(
     prefix="/tasks",
@@ -43,13 +42,6 @@ def _can_manage_any(principal: Principal) -> bool:
     return bool(principal.roles & _MANAGE_ANY_ROLES)
 
 
-async def _service(session: SessionDep) -> TaskService:
-    return TaskService(repo=SqlAlchemyTaskRepository(session))
-
-
-ServiceDep = Annotated[TaskService, Depends(_service)]
-
-
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED,
@@ -57,10 +49,10 @@ ServiceDep = Annotated[TaskService, Depends(_service)]
     summary="Create a task",
 )
 async def create_task(
-    body: CreateTaskRequest, principal: PrincipalDep, service: ServiceDep
+    body: CreateTaskRequest, principal: PrincipalDep, service: TaskServiceDep
 ) -> Envelope[TaskResponse]:
     task = await service.create(owner_id=_owner_id(principal), command=body.to_command())
-    return Envelope(data=TaskResponse.from_entity(task))
+    return Envelope(data=TaskResponse.from_model(task))
 
 
 @router.get(
@@ -70,7 +62,7 @@ async def create_task(
 )
 async def list_tasks(
     principal: PrincipalDep,
-    service: ServiceDep,
+    service: TaskServiceDep,
     status_: Annotated[TaskStatus | None, Query(alias="status")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -89,11 +81,11 @@ async def list_tasks(
     summary="Get a task by id",
 )
 async def get_task(
-    task_id: UUID, principal: PrincipalDep, service: ServiceDep
+    task_id: UUID, principal: PrincipalDep, service: TaskServiceDep
 ) -> Envelope[TaskResponse]:
     # Org-wide read: any member may view any task in their organization.
     task = await service.get(task_id=task_id)
-    return Envelope(data=TaskResponse.from_entity(task))
+    return Envelope(data=TaskResponse.from_model(task))
 
 
 @router.patch(
@@ -105,7 +97,7 @@ async def update_task(
     task_id: UUID,
     body: UpdateTaskRequest,
     principal: PrincipalDep,
-    service: ServiceDep,
+    service: TaskServiceDep,
 ) -> Envelope[TaskResponse]:
     task = await service.update(
         task_id=task_id,
@@ -113,7 +105,7 @@ async def update_task(
         can_manage_any=_can_manage_any(principal),
         command=body.to_command(),
     )
-    return Envelope(data=TaskResponse.from_entity(task))
+    return Envelope(data=TaskResponse.from_model(task))
 
 
 @router.post(
@@ -122,12 +114,12 @@ async def update_task(
     summary="Transition task to in_progress (owner or tenant admin)",
 )
 async def start_task(
-    task_id: UUID, principal: PrincipalDep, service: ServiceDep
+    task_id: UUID, principal: PrincipalDep, service: TaskServiceDep
 ) -> Envelope[TaskResponse]:
     task = await service.start(
         task_id=task_id, actor_id=_owner_id(principal), can_manage_any=_can_manage_any(principal)
     )
-    return Envelope(data=TaskResponse.from_entity(task))
+    return Envelope(data=TaskResponse.from_model(task))
 
 
 @router.post(
@@ -136,12 +128,12 @@ async def start_task(
     summary="Transition task to done (owner or tenant admin)",
 )
 async def complete_task(
-    task_id: UUID, principal: PrincipalDep, service: ServiceDep
+    task_id: UUID, principal: PrincipalDep, service: TaskServiceDep
 ) -> Envelope[TaskResponse]:
     task = await service.complete(
         task_id=task_id, actor_id=_owner_id(principal), can_manage_any=_can_manage_any(principal)
     )
-    return Envelope(data=TaskResponse.from_entity(task))
+    return Envelope(data=TaskResponse.from_model(task))
 
 
 @router.post(
@@ -150,12 +142,12 @@ async def complete_task(
     summary="Transition task to cancelled (owner or tenant admin)",
 )
 async def cancel_task(
-    task_id: UUID, principal: PrincipalDep, service: ServiceDep
+    task_id: UUID, principal: PrincipalDep, service: TaskServiceDep
 ) -> Envelope[TaskResponse]:
     task = await service.cancel(
         task_id=task_id, actor_id=_owner_id(principal), can_manage_any=_can_manage_any(principal)
     )
-    return Envelope(data=TaskResponse.from_entity(task))
+    return Envelope(data=TaskResponse.from_model(task))
 
 
 @router.delete(
@@ -164,7 +156,7 @@ async def cancel_task(
     summary="Delete a task (owner or tenant admin)",
 )
 async def delete_task(
-    task_id: UUID, principal: PrincipalDep, service: ServiceDep
+    task_id: UUID, principal: PrincipalDep, service: TaskServiceDep
 ) -> Response:
     await service.delete(
         task_id=task_id, actor_id=_owner_id(principal), can_manage_any=_can_manage_any(principal)
