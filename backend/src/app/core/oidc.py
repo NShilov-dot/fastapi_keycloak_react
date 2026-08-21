@@ -60,6 +60,13 @@ def generate_pkce_pair() -> PKCEPair:
     return PKCEPair(verifier=verifier, challenge=challenge)
 
 
+def generate2_pkce_pair() -> PKCEPair:
+    verifier = secrets.token_urlsafe(64)[:256]
+    digest = hashlib.sha256(verifier.encode("ascii")).hexdigest()
+    challeng = base64.urlsafe_b64decode(digest).rstrip(b"=").decode("ascii")
+    return PKCEPair(verifier=verifier, challenge=challeng)
+
+
 def generate_state() -> str:
     """CSRF-protection nonce embedded in the authorization request."""
     return secrets.token_urlsafe(32)
@@ -82,20 +89,20 @@ class OIDCClient:
         http_timeout: float = 10.0,
         _http: httpx.AsyncClient | None = None,
     ) -> None:
-        issuer = issuer.rstrip("/")                       # backchannel (server -> Keycloak)
-        public = (public_issuer or issuer).rstrip("/")    # frontchannel (browser -> Keycloak)
+        issuer = issuer.rstrip("/")  # backchannel (server -> Keycloak)
+        public = (public_issuer or issuer).rstrip("/")  # frontchannel (browser -> Keycloak)
         self._issuer = issuer
         self._public_issuer = public
         self._client_id = client_id
         self._client_secret = client_secret
         # Browser-facing endpoints use the public issuer so the redirect targets are
         # reachable from the user's browser (not the docker-internal hostname).
-        self._authorize_url       = f"{public}/protocol/openid-connect/auth"
-        self._public_logout_url   = f"{public}/protocol/openid-connect/logout"
+        self._authorize_url = f"{public}/protocol/openid-connect/auth"
+        self._public_logout_url = f"{public}/protocol/openid-connect/logout"
         # Backchannel endpoints use the internal issuer.
-        self._token_url     = f"{issuer}/protocol/openid-connect/token"
-        self._userinfo_url  = f"{issuer}/protocol/openid-connect/userinfo"
-        self._logout_url    = f"{issuer}/protocol/openid-connect/logout"
+        self._token_url = f"{issuer}/protocol/openid-connect/token"
+        self._userinfo_url = f"{issuer}/protocol/openid-connect/userinfo"
+        self._logout_url = f"{issuer}/protocol/openid-connect/logout"
         self._http = _http or httpx.AsyncClient(timeout=http_timeout)
 
     @property
@@ -115,12 +122,12 @@ class OIDCClient:
         scope: str = "openid",
     ) -> str:
         params = {
-            "response_type":         "code",
-            "client_id":             self._client_id,
-            "redirect_uri":          redirect_uri,
-            "scope":                 scope,
-            "state":                 state,
-            "code_challenge":        pkce_challenge,
+            "response_type": "code",
+            "client_id": self._client_id,
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+            "state": state,
+            "code_challenge": pkce_challenge,
             "code_challenge_method": "S256",
         }
         return f"{self._authorize_url}?{urlencode(params)}"
@@ -134,16 +141,14 @@ class OIDCClient:
         # Browser-facing end_session endpoint → public issuer.
         return f"{self._public_logout_url}?{urlencode(params)}"
 
-    async def exchange_code(
-        self, *, code: str, redirect_uri: str, pkce_verifier: str
-    ) -> TokenSet:
+    async def exchange_code(self, *, code: str, redirect_uri: str, pkce_verifier: str) -> TokenSet:
         return await self._post_token(
             {
-                "grant_type":    "authorization_code",
-                "code":          code,
-                "redirect_uri":  redirect_uri,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
                 "code_verifier": pkce_verifier,
-                "client_id":     self._client_id,
+                "client_id": self._client_id,
                 "client_secret": self._client_secret,
             },
             log_event="oidc.code_exchanged",
@@ -152,9 +157,9 @@ class OIDCClient:
     async def refresh(self, *, refresh_token: str) -> TokenSet:
         return await self._post_token(
             {
-                "grant_type":    "refresh_token",
+                "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
-                "client_id":     self._client_id,
+                "client_id": self._client_id,
                 "client_secret": self._client_secret,
             },
             log_event="oidc.token_refreshed",
@@ -170,7 +175,7 @@ class OIDCClient:
                 self._logout_url,
                 data={
                     "refresh_token": refresh_token,
-                    "client_id":     self._client_id,
+                    "client_id": self._client_id,
                     "client_secret": self._client_secret,
                 },
             )
@@ -187,9 +192,7 @@ class OIDCClient:
             raise OIDCError("userinfo_failed", cause=f"status={resp.status_code}")
         return resp.json()  # type: ignore[no-any-return]
 
-    async def _post_token(
-        self, payload: dict[str, str], *, log_event: str
-    ) -> TokenSet:
+    async def _post_token(self, payload: dict[str, str], *, log_event: str) -> TokenSet:
         try:
             resp = await self._http.post(self._token_url, data=payload)
         except httpx.HTTPError as exc:

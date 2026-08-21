@@ -32,6 +32,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Fail fast on bad production configuration before accepting traffic
     settings.validate_for_production()
 
+    # Nudge (not a hard failure): public signup without email verification lets a
+    # caller register an address they don't own (squatting). Safe for internal/no-SMTP
+    # deployments; enable SIGNUP_REQUIRE_EMAIL_VERIFICATION for internet-facing ones.
+    if (
+        settings.is_prod
+        and settings.signup_enabled
+        and not settings.signup_require_email_verification
+    ):
+        logger.warning(
+            "signup.email_verification_disabled",
+            detail="SIGNUP_ENABLED=true without SIGNUP_REQUIRE_EMAIL_VERIFICATION; "
+            "self-service founder emails are unverified. Enable it (needs SMTP) for public deployments.",
+        )
+
     # Expected token `iss` is the public issuer; JWKS is fetched over the internal
     # (backchannel) URL — they differ when Keycloak is behind docker/ingress.
     internal_issuer = str(settings.keycloak_issuer).rstrip("/")

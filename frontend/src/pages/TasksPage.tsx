@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
 import type { TaskStatus } from '../types/api'
 import { TaskCard } from '../components/TaskCard'
@@ -37,6 +37,9 @@ export default function TasksPage() {
         limit:  PAGE_SIZE,
         offset: page * PAGE_SIZE,
       }),
+    // Keep showing the current page/filter's results while the next query loads,
+    // instead of blanking the list to a spinner on every pagination/filter change.
+    placeholderData: keepPreviousData,
   })
 
   const tasks      = data?.data ?? []

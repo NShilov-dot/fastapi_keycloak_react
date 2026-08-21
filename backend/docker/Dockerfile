@@ -17,27 +17,25 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.4 /uv /usr/local/bin/uv
 
 FROM base AS builder
 WORKDIR /app
-COPY pyproject.toml ./
-# NB: two steps (compile -> file -> install) instead of `-r <(... )`. Docker RUN
-# uses /bin/sh (dash), which has no process substitution, so `<(...)` errors out.
+# Install prod dependencies from the committed lockfile into /opt/venv
+# (UV_PROJECT_ENVIRONMENT). --frozen uses uv.lock as-is (reproducible, hash-checked)
+# and errors if it is missing. --no-install-project: only third-party deps live in
+# the image; app source is copied separately and imported via PYTHONPATH, so the
+# project package itself is never built/installed here.
+COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv venv /opt/venv \
-    && uv pip compile pyproject.toml --quiet -o /tmp/requirements.txt \
-    && uv pip install --python /opt/venv/bin/python -r /tmp/requirements.txt
+    uv sync --frozen --no-dev --no-install-project
 
 
 FROM base AS dev
 WORKDIR /app
-COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}" \
     PYTHONPATH="/app/src"
-COPY pyproject.toml ./
-# Dependency-groups (PEP 735) are a uv *project* concept; `uv pip install --group`
-# does not exist. Export the dev group to a requirements file, then pip-install it.
+# Prod + dev groups from the same lockfile, so ruff/mypy/pytest are pinned exactly
+# as in CI. --no-install-project: source is copied below, not installed.
+COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv export --only-group dev --format requirements-txt --no-emit-project --no-hashes \
-      -o /tmp/dev-requirements.txt \
-    && uv pip install --python /opt/venv/bin/python -r /tmp/dev-requirements.txt
+    uv sync --frozen --no-install-project
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini

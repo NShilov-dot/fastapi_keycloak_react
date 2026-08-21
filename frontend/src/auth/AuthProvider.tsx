@@ -44,7 +44,7 @@ function clearRedirectLoopState(): void {
 }
 
 /**
- * Send the browser to /api/auth/login, preserving where we are.
+ * Send the browser to /v1/auth/login, preserving where we are.
  * Returns false (without navigating) if we appear to be in a redirect loop.
  */
 function redirectToLogin(): boolean {

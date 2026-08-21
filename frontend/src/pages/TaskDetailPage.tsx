@@ -1,7 +1,6 @@
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
-import type { TaskStatus } from '../types/api'
 import { useAuth } from '../auth/AuthProvider'
 import { canManageTask, isOwnTask } from '../auth/access'
 import { StatusBadge } from '../components/StatusBadge'
@@ -53,7 +52,7 @@ export default function TaskDetailPage() {
   const task = data?.data
   if (!task) return <p className="text-muted-foreground py-8">Task not found.</p>
 
-  const s = task.status as TaskStatus
+  const s = task.status
   const own = isOwnTask(user, task.owner_id)
   const canManage = canManageTask(user, task.owner_id)
 

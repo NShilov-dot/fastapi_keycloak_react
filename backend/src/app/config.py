@@ -121,6 +121,14 @@ class Settings(BaseSettings):
     # sales-led / invite-only deployment so tenants are created only by an operator.
     signup_enabled: bool = True
 
+    # When True, self-service signup forces email verification for the founding admin
+    # (Keycloak VERIFY_EMAIL required action + a verification email). Requires SMTP
+    # configured on the realm. Leave False for no-SMTP deployments: the founder is
+    # still created email_verified=False (we never assert an unproven email) but can
+    # log in immediately. Turn ON for any public/internet-facing deployment to prevent
+    # email-ownership squatting.
+    signup_require_email_verification: bool = False
+
     # Maximum allowed request body size in bytes (default 1 MB)
     max_body_size_bytes: int = 1_048_576
 

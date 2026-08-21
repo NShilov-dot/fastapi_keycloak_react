@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 
-// Mirrors the backend SignupRequest (app/modules/tenants/interface/schemas.py):
+// Mirrors the backend SignupRequest (app/schemas/tenant.py):
 // slug pattern + 12-char password floor are enforced server-side too.
 const schema = z
   .object({
@@ -191,7 +191,7 @@ export default function SignupPage() {
                   />
 
                   {error && (
-                    <p className="text-sm text-red-500" role="alert">
+                    <p className="text-sm text-destructive dark:text-red-400" role="alert">
                       {getErrorMessage(error)}
                     </p>
                   )}

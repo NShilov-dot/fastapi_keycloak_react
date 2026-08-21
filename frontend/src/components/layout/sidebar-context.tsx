@@ -11,7 +11,6 @@ import { Button } from '@/components/ui/button'
 type SidebarContextValue = {
   collapsed: boolean
   toggle: () => void
-  setCollapsed: (value: boolean) => void
 }
 
 const SidebarContext = createContext<SidebarContextValue | null>(null)
@@ -46,7 +45,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   const toggle = () => setCollapsed((c) => !c)
 
   return (
-    <SidebarContext.Provider value={{ collapsed, toggle, setCollapsed }}>
+    <SidebarContext.Provider value={{ collapsed, toggle }}>
       {children}
     </SidebarContext.Provider>
   )
