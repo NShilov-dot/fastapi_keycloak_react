@@ -5,14 +5,13 @@ ARG PYTHON_VERSION=3.12-slim-bookworm
 FROM python:${PYTHON_VERSION} AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1 \
     UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates tini \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=ghcr.io/astral-sh/uv:0.5.4 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /usr/local/bin/uv
 
 
 FROM base AS builder
@@ -55,11 +54,15 @@ COPY --chown=app:app alembic ./alembic
 COPY --chown=app:app alembic.ini ./alembic.ini
 USER app
 EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+    CMD curl -fsS http://localhost:8000/v1/healthz || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--"]
+# Safe default: trust forwarded headers only from private ranges (the edge nginx).
+# docker-compose.prod.yml overrides the command with the same values.
 CMD ["gunicorn", "app.main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--workers", "4", \
      "--bind", "0.0.0.0:8000", \
-     "--forwarded-allow-ips", "*", \
+     "--forwarded-allow-ips", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16", \
      "--access-logfile", "-", \
      "--error-logfile", "-"]

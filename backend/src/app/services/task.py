@@ -15,12 +15,6 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-# --- Commands / queries -----------------------------------------------------
-# Plain dataclasses the interface layer builds from the Pydantic request. They
-# carry the partial-update semantics (`*_set` flags distinguish "leave alone"
-# from "set to null"), which is why they earn their keep as a small layer.
-
-
 @dataclass(slots=True, kw_only=True)
 class CreateTaskCommand:
     title: str
@@ -28,15 +22,8 @@ class CreateTaskCommand:
     priority: TaskPriority = TaskPriority.MEDIUM
     due_at: datetime | None = None
 
-
 @dataclass(slots=True, kw_only=True)
 class UpdateTaskCommand:
-    """Partial update. For nullable fields, the `*_set` flag MUST be true to
-    apply the value — that lets the caller distinguish "leave alone" from
-    "set to null". The interface layer translates `fields_set` from the
-    Pydantic request body into these flags.
-    """
-
     title: str | None = None
     description: str | None = None
     description_set: bool = False
@@ -64,12 +51,6 @@ class Page(NamedTuple):
 
 @dataclass(slots=True)
 class TaskService:
-    """Visibility model: all members of an organization SEE every task in it
-    (reads are org-wide — the tenant schema is the org boundary), but only a
-    task's owner — or a tenant/platform admin (`can_manage_any`) — may modify or
-    delete it.
-    """
-
     repo: TaskRepository
     clock: Callable[[], datetime] = field(default=_utc_now)
 
