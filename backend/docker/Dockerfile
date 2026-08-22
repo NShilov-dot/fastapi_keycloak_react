@@ -57,8 +57,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
     CMD curl -fsS http://localhost:8000/v1/healthz || exit 1
 ENTRYPOINT ["/usr/bin/tini", "--"]
-# Safe default: trust forwarded headers only from private ranges (the edge nginx).
-# docker-compose.prod.yml overrides the command with the same values.
 CMD ["gunicorn", "app.main:app", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--workers", "4", \
