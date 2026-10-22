@@ -5,8 +5,9 @@ Session model:
                   HttpOnly cookie. THIS IS the secret: anyone who has the
                   cookie can act as the user until session_idle_seconds
                   passes without a request.
-  - payload     — stored as a Redis Hash at `sess:{session_id}`:
-                    access_token, refresh_token, id_token, subject, expires_at
+  - payload     — stored at `sess:{sha256(session_id)}` (never the raw id, so
+                  reading Redis keys doesn't yield usable cookies):
+                    access_token, refresh_token, subject, expires_at
   - TTL         — Redis key TTL = session_idle_seconds. Each request bumps it
                   (sliding idle timeout). A separate `created_at` field caps
                   the absolute lifetime.
@@ -17,6 +18,7 @@ in the same Redis under `login:{state}` with a short TTL.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import time
@@ -57,6 +59,13 @@ class LoginState:
 
 def generate_session_id() -> str:
     return secrets.token_urlsafe(32)
+
+
+def _session_key(sid: str) -> str:
+    # The cookie value is the bearer secret; keying Redis by its hash means a leaked
+    # dump/replica/SSRF read of the keyspace yields no replayable session ids —
+    # something the at-rest payload encryption alone cannot prevent.
+    return _SESSION_KEY_PREFIX + hashlib.sha256(sid.encode()).hexdigest()
 
 
 class SessionStore:
@@ -115,14 +124,14 @@ class SessionStore:
         """Create a new session and return its id."""
         sid = generate_session_id()
         await self._redis.set(
-            _SESSION_KEY_PREFIX + sid,
+            _session_key(sid),
             self._dumps(asdict(data)),
             ex=self._idle,
         )
         return sid
 
     async def get(self, sid: str) -> SessionData | None:
-        raw = await self._redis.get(_SESSION_KEY_PREFIX + sid)
+        raw = await self._redis.get(_session_key(sid))
         if raw is None:
             return None
         payload = self._loads(raw)
@@ -140,18 +149,18 @@ class SessionStore:
 
     async def touch(self, sid: str) -> None:
         """Bump the idle-timeout TTL on a sliding-window basis."""
-        await self._redis.expire(_SESSION_KEY_PREFIX + sid, self._idle)
+        await self._redis.expire(_session_key(sid), self._idle)
 
     async def update(self, sid: str, data: SessionData) -> None:
         """Overwrite session payload (used after token refresh). Resets idle TTL."""
         await self._redis.set(
-            _SESSION_KEY_PREFIX + sid,
+            _session_key(sid),
             self._dumps(asdict(data)),
             ex=self._idle,
         )
 
     async def delete(self, sid: str) -> None:
-        await self._redis.delete(_SESSION_KEY_PREFIX + sid)
+        await self._redis.delete(_session_key(sid))
 
     # ------------------------------------------------------------------
     # Login state (pre-callback OAuth scratchpad)

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from app.core.sessions import LoginState, SessionData, SessionStore
+from app.core.sessions import LoginState, SessionData, SessionStore, _session_key
 
 
 class _FakeRedis:
@@ -114,6 +114,15 @@ async def test_get_returns_stored_session() -> None:
 
 
 @pytest.mark.asyncio
+async def test_redis_keys_never_contain_the_raw_session_id() -> None:
+    # A Redis keyspace leak must not hand out replayable cookie values.
+    store, fake = _make_store()
+    sid = await store.create(_session_data())
+    assert all(sid not in key for key in fake.store)
+    assert await store.get(sid) is not None
+
+
+@pytest.mark.asyncio
 async def test_get_missing_session_returns_none() -> None:
     store, _ = _make_store()
     assert await store.get("nonexistent") is None
@@ -124,7 +133,7 @@ async def test_get_drops_session_past_absolute_lifetime() -> None:
     store, fake = _make_store(ttl=10)
     sid = await store.create(_session_data())
     # Manually rewind created_at to be older than ttl
-    raw_key = f"sess:{sid}"
+    raw_key = _session_key(sid)
     raw, _ = fake.store[raw_key]
     payload = json.loads(raw)
     payload["created_at"] = int(time.time()) - 100
@@ -139,18 +148,18 @@ async def test_get_drops_session_past_absolute_lifetime() -> None:
 async def test_corrupt_payload_is_dropped() -> None:
     store, fake = _make_store()
     sid = "fakesid"
-    fake.store[f"sess:{sid}"] = ("not-json-at-all", time.time() + 100)
+    fake.store[_session_key(sid)] = ("not-json-at-all", time.time() + 100)
     assert await store.get(sid) is None
-    assert f"sess:{sid}" not in fake.store
+    assert _session_key(sid) not in fake.store
 
 
 @pytest.mark.asyncio
 async def test_touch_extends_idle_ttl() -> None:
     store, fake = _make_store(idle=60)
     sid = await store.create(_session_data())
-    before = fake.store[f"sess:{sid}"][1]
+    before = fake.store[_session_key(sid)][1]
     await store.touch(sid)
-    after = fake.store[f"sess:{sid}"][1]
+    after = fake.store[_session_key(sid)][1]
     assert after >= before
 
 
@@ -235,7 +244,7 @@ async def test_tokens_are_encrypted_at_rest_and_round_trip() -> None:
     store, fake = _make_store(cipher=cipher)
     sid = await store.create(data)
 
-    raw, _ = fake.store[f"sess:{sid}"]
+    raw, _ = fake.store[_session_key(sid)]
     # The raw Redis value must NOT expose the token plaintext or be JSON.
     assert marker not in raw and refresh_marker not in raw
     assert not raw.lstrip().startswith("{")
