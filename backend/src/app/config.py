@@ -207,8 +207,12 @@ class Settings(BaseSettings):
         return TokenCipher.from_raw_keys(raw)
 
     def validate_for_production(self) -> None:
-        """Raise ValueError if any mandatory production-safety constraint is violated."""
-        if not self.is_prod:
+        """Raise ValueError if any mandatory production-safety constraint is violated.
+
+        Staging gets the same gate: it is just as reachable, and e.g. APP_DEBUG there
+        hands full tracebacks to any caller.
+        """
+        if self.app_env not in {"staging", "prod"}:
             return
         errors: list[str] = []
         if self.app_debug:

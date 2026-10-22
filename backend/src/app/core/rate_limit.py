@@ -43,10 +43,14 @@ class RateLimiter:
         bucket = int(time.time()) // window_seconds
         full_key = f"rl:{key}:{bucket}"
         try:
-            count: int = await self._redis.incr(full_key)
-            if count == 1:
-                await self._redis.expire(full_key, window_seconds + 1)
-            return count <= limit
+            # One MULTI/EXEC round-trip: INCR and the TTL land together, so a crash
+            # between them can't leave a counter without expiry. Re-setting the TTL
+            # on every hit is harmless — the bucket is already part of the key.
+            pipe = self._redis.pipeline(transaction=True)
+            pipe.incr(full_key)
+            pipe.expire(full_key, window_seconds + 1)
+            count, _ = await pipe.execute()
+            return int(count) <= limit
         except (RedisError, OSError, TimeoutError):
             # Narrowed to connectivity errors so genuine logic bugs surface as 500s
             # rather than being silently treated as "allow".

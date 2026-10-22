@@ -64,6 +64,12 @@ def test_prod_validation_flags_each_gap(override: dict[str, object], needle: str
     assert needle in str(exc.value)
 
 
+def test_staging_gets_the_production_gate() -> None:
+    # APP_DEBUG returns full tracebacks to callers, so staging must not skip the gate.
+    with pytest.raises(ValueError, match="APP_DEBUG"):
+        _prod(app_env="staging", app_debug=True).validate_for_production()
+
+
 def test_redis_with_password_is_accepted() -> None:
     _prod(redis_url="redis://:strongpw@redis:6379/0").validate_for_production()
 

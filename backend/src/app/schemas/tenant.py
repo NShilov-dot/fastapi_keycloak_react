@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, get_args
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, SecretStr
@@ -56,7 +56,11 @@ class TenantCreatedResponse(BaseModel):
 
 class InviteMemberRequest(BaseModel):
     email: EmailStr
-    roles: list[MemberRole] = Field(default_factory=lambda: list(_DEFAULT_MEMBER_ROLES))
+    # Capped at the number of grantable roles: every entry costs Keycloak round-trips,
+    # so an unbounded list would let a tenant_admin amplify one request into thousands.
+    roles: list[MemberRole] = Field(
+        default_factory=lambda: list(_DEFAULT_MEMBER_ROLES), max_length=len(get_args(MemberRole))
+    )
 
 
 class MemberInvitedResponse(BaseModel):
