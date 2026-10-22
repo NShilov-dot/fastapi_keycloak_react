@@ -17,7 +17,7 @@ dependencies = [
     "redis>=5.1.0",
     "structlog>=24.4.0",
     "cryptography>=43.0.0",
-    "python-jose[cryptography]>=3.3.0",
+    "pyjwt[crypto]>=2.15.1",
     "cachetools>=5.5.0",
     "orjson>=3.10.7",
 ]
@@ -33,7 +33,6 @@ dev = [
     "testcontainers[postgres]>=4.8.1",
     "asgi-lifespan>=2.1.0",
     "types-cachetools>=5.5.0",
-    "types-python-jose>=3.3.4",
 ]
 
 [build-system]
@@ -76,7 +75,7 @@ files = ["src"]
 exclude = ["alembic/versions"]
 
 [[tool.mypy.overrides]]
-module = ["jose.*", "testcontainers.*"]
+module = ["testcontainers.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

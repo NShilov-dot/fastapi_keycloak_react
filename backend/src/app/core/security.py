@@ -7,9 +7,8 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+import jwt
 import structlog
-from jose import jwt
-from jose.exceptions import JWTError
 
 from app.core.errors import DomainError
 
@@ -122,7 +121,7 @@ async def verify_token(
 
     try:
         unverified_header = jwt.get_unverified_header(token)
-    except JWTError as exc:
+    except jwt.PyJWTError as exc:
         raise _fail("malformed_bearer_token") from exc
 
     kid = unverified_header.get("kid")
@@ -146,25 +145,18 @@ async def verify_token(
     try:
         claims = jwt.decode(
             token,
-            key,
+            jwt.PyJWK(key).key,
             algorithms=[alg],
             audience=audience,
             issuer=jwks.issuer,
-            options={
-                "verify_at_hash": False,
-                # Reject tokens that simply omit the claims we rely on, rather than
-                # silently passing validation when aud/exp/iss/sub are absent.
-                "require_aud": True,
-                "require_exp": True,
-                "require_iss": True,
-                "require_sub": True,
-                # python-jose takes leeway via options, not a kwarg.
-                "leeway": leeway_seconds,
-            },
+            leeway=leeway_seconds,
+            # Reject tokens that simply omit the claims we rely on, rather than
+            # silently passing validation when aud/exp/iss/sub are absent.
+            options={"require": ["aud", "exp", "iss", "sub"]},
         )
-    except JWTError as exc:
-        # Log the jose detail (generic message, e.g. "Signature verification failed" /
-        # "Invalid audience") to aid debugging; keep the client-facing reason generic.
+    except jwt.PyJWTError as exc:
+        # Log the PyJWT detail (generic message, e.g. "Signature verification failed" /
+        # "Audience doesn't match") to aid debugging; keep the client-facing reason generic.
         logger.warning("auth.token_rejected", reason="token_decode_failed", detail=str(exc))
         raise AuthError("token_decode_failed") from exc
 

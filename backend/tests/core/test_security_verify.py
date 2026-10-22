@@ -10,10 +10,10 @@ from __future__ import annotations
 import base64
 import time
 
+import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from jose import jwt
 
 from app.core.security import AuthError, JWKSCache, verify_token
 
@@ -136,3 +136,32 @@ async def test_wrong_signature_is_rejected() -> None:
     _, jwks_b = _key_and_jwks()  # different key in the JWKS than the signer
     with pytest.raises(AuthError):
         await _verify(_token(priv_a), jwks_b)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encoding", [serialization.Encoding.PEM, serialization.Encoding.DER])
+async def test_hs256_forged_with_the_public_key_is_rejected(
+    encoding: serialization.Encoding,
+) -> None:
+    """Algorithm confusion: an HMAC token whose secret is the realm's PUBLIC key
+    (the attack class behind python-jose PYSEC-2026-4298) must be rejected."""
+    import hashlib
+    import hmac
+    import json
+
+    priv, jwks = _key_and_jwks()
+    public_key = serialization.load_pem_private_key(priv.encode(), None).public_key()
+    secret = public_key.public_bytes(encoding, serialization.PublicFormat.SubjectPublicKeyInfo)
+
+    def b64u(raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    header = {"alg": "HS256", "kid": "kid1", "typ": "JWT"}
+    claims = {
+        "iss": _ISSUER, "aud": _AUD, "sub": "attacker", "exp": int(time.time()) + 300,
+        "typ": "Bearer", "tenant_id": _TENANT, "realm_access": {"roles": ["platform_admin"]},
+    }
+    signing_input = f"{b64u(json.dumps(header).encode())}.{b64u(json.dumps(claims).encode())}"
+    signature = hmac.new(secret, signing_input.encode(), hashlib.sha256).digest()
+    with pytest.raises(AuthError):
+        await _verify(f"{signing_input}.{b64u(signature)}", jwks)
