@@ -59,13 +59,6 @@ def generate_pkce_pair() -> PKCEPair:
     return PKCEPair(verifier=verifier, challenge=challenge)
 
 
-def generate2_pkce_pair() -> PKCEPair:
-    verifier = secrets.token_urlsafe(64)[:256]
-    digest = hashlib.sha256(verifier.encode("ascii")).hexdigest()
-    challeng = base64.urlsafe_b64decode(digest).rstrip(b"=").decode("ascii")
-    return PKCEPair(verifier=verifier, challenge=challeng)
-
-
 def generate_state() -> str:
     """CSRF-protection nonce embedded in the authorization request."""
     return secrets.token_urlsafe(32)

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -57,18 +55,3 @@ async def dispose_engine() -> None:
         await _engine.dispose()
     _engine = None
     _sessionmaker = None
-
-
-async def session_for_schema(schema: str) -> AsyncIterator[AsyncSession]:
-    """Yield an AsyncSession with search_path set to (schema, public)."""
-    factory = get_sessionmaker()
-    async with factory() as session:
-        # Identifiers cannot be parameterized — schema is validated upstream.
-        await session.execute(
-            __import__("sqlalchemy").text(f'SET LOCAL search_path TO "{schema}", public')
-        )
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
