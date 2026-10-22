@@ -22,6 +22,10 @@ jobs:
           enable-cache: true
       - name: Install deps (frozen — fails if uv.lock is out of date)
         run: uv sync --frozen
+      - name: Audit runtime deps (pip-audit on the locked prod closure)
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project -o "$RUNNER_TEMP/req.txt"
+          uvx --from pip-audit==2.10.1 pip-audit -r "$RUNNER_TEMP/req.txt" --no-deps --disable-pip
       - name: Lint (ruff)
         run: uv run ruff check src tests
       - name: Type-check (mypy --strict, src)
@@ -44,5 +48,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      - name: Audit runtime deps (what ships in the bundle)
+        run: npm audit --omit=dev
       - name: Type-check + build
         run: npm run build
