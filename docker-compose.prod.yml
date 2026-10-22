@@ -15,6 +15,10 @@
 # postgres / keycloak-db / frontend inherit the base unchanged (no published ports
 # in prod — they're internal-only by virtue of the base not publishing any).
 services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD}
+
   keycloak:
     # Production mode. TLS is terminated at the edge nginx, so Keycloak trusts
     # X-Forwarded-* and serves HTTP internally. Expose it publicly via the edge
