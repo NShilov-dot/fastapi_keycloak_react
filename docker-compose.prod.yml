@@ -28,8 +28,8 @@ services:
       KC_HOSTNAME: ${KC_HOSTNAME:?set KC_HOSTNAME (public Keycloak host, e.g. auth.example.com)}
       KC_PROXY_HEADERS: xforwarded
       KC_HTTP_ENABLED: "true"
-      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:?set KEYCLOAK_ADMIN}
-      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?set KEYCLOAK_ADMIN}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD}
     # no published ports — fronted by the edge / ingress
 
   redis:
