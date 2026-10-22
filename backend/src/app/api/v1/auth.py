@@ -43,6 +43,7 @@ from app.core.deps import (
     SessionStoreDep,
     check_anon_rate_limit,
     check_csrf,
+    verify_access_token,
 )
 from app.core.errors import DomainError
 from app.core.oidc import OIDCError, generate_pkce_pair, generate_state
@@ -197,16 +198,9 @@ async def callback(
         raise _AuthFlowError("Login failed during token exchange") from exc
 
     # Verify the access_token locally so we don't trust whatever just came back
-    # from Keycloak blindly — local import keeps the module-load cycle short.
-    from app.core.security import verify_token
-    jwks = request.app.state.jwks
-    principal = await verify_token(
-        tokens.access_token,
-        jwks=jwks,
-        audience=settings.keycloak_audience,
-        tenant_claim=settings.keycloak_tenant_claim,
-        roles_claim=settings.keycloak_roles_claim,
-        leeway_seconds=settings.keycloak_leeway_seconds,
+    # from Keycloak blindly — same policy (typ, azp, …) as every later request.
+    principal = await verify_access_token(
+        tokens.access_token, jwks=request.app.state.jwks, settings=settings
     )
 
     now = int(time.time())
@@ -215,7 +209,6 @@ async def callback(
             subject=principal.subject,
             access_token=tokens.access_token,
             refresh_token=tokens.refresh_token,
-            id_token=tokens.id_token,
             access_expires_at=now + tokens.expires_in,
             created_at=now,
         )
@@ -250,11 +243,11 @@ async def logout(request: Request, oidc: OIDCDep, sessions: SessionStoreDep) -> 
                 await oidc.revoke_refresh_token(refresh_token=sess.refresh_token)
             # RP-Initiated Logout: hand the SPA an end_session URL so it can also
             # clear the browser's Keycloak SSO session (otherwise a later /login
-            # silently re-authenticates on shared devices). id_token_hint lets
-            # Keycloak skip the confirmation prompt.
+            # silently re-authenticates on shared devices). Deliberately WITHOUT
+            # id_token_hint: that would put a token in the browser (JSON + URL),
+            # breaking the BFF invariant — Keycloak shows a logout confirmation instead.
             logout_url = oidc.build_logout_url(
                 post_logout_redirect_uri=str(settings.frontend_base_url).rstrip("/") + "/",
-                id_token_hint=sess.id_token,
             )
         await sessions.delete(sid)
 

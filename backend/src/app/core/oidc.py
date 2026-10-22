@@ -31,7 +31,6 @@ class TokenSet:
 
     access_token: str
     refresh_token: str | None
-    id_token: str | None
     expires_in: int
     refresh_expires_in: int
     token_type: str
@@ -132,12 +131,10 @@ class OIDCClient:
         }
         return f"{self._authorize_url}?{urlencode(params)}"
 
-    def build_logout_url(self, *, post_logout_redirect_uri: str, id_token_hint: str | None) -> str:
-        params: dict[str, str] = {"post_logout_redirect_uri": post_logout_redirect_uri}
-        # id_token_hint lets Keycloak verify the logout originates from a real session
-        if id_token_hint:
-            params["id_token_hint"] = id_token_hint
-        params["client_id"] = self._client_id
+    def build_logout_url(self, *, post_logout_redirect_uri: str) -> str:
+        # No id_token_hint: this URL goes to the browser, which must never hold a
+        # token. client_id is what lets Keycloak accept post_logout_redirect_uri.
+        params = {"post_logout_redirect_uri": post_logout_redirect_uri, "client_id": self._client_id}
         # Browser-facing end_session endpoint → public issuer.
         return f"{self._public_logout_url}?{urlencode(params)}"
 
@@ -214,7 +211,6 @@ class OIDCClient:
         token_set = TokenSet(
             access_token=body["access_token"],
             refresh_token=body.get("refresh_token"),
-            id_token=body.get("id_token"),
             expires_in=int(body["expires_in"]),
             refresh_expires_in=int(body.get("refresh_expires_in", 0)),
             token_type=body.get("token_type", "Bearer"),

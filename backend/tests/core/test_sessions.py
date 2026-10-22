@@ -85,7 +85,6 @@ def _session_data() -> SessionData:
         subject="user-1",
         access_token="AT",
         refresh_token="RT",
-        id_token="IT",
         access_expires_at=now + 300,
         created_at=now,
     )
@@ -163,7 +162,6 @@ async def test_update_replaces_payload() -> None:
         subject="user-1",
         access_token="NEW-AT",
         refresh_token="NEW-RT",
-        id_token="NEW-IT",
         access_expires_at=int(time.time()) + 600,
         created_at=int(time.time()),
     )
@@ -230,7 +228,6 @@ async def test_tokens_are_encrypted_at_rest_and_round_trip() -> None:
         subject="user-1",
         access_token=marker,
         refresh_token=refresh_marker,
-        id_token="IT",
         access_expires_at=now + 300,
         created_at=now,
     )

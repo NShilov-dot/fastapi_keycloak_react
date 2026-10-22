@@ -42,7 +42,6 @@ class SessionData:
     subject: str          # Keycloak `sub` claim, also our user UUID
     access_token: str
     refresh_token: str | None
-    id_token: str | None
     access_expires_at: int  # unix seconds — when the access_token expires
     created_at: int         # unix seconds — for absolute-max lifetime check
 

@@ -75,11 +75,11 @@ def test_public_issuer_used_for_browser_endpoints_internal_for_backchannel() -> 
         state="S",
         pkce_challenge="C",
     )
-    logout = client.build_logout_url(
-        post_logout_redirect_uri="http://localhost:3000/", id_token_hint="idt"
-    )
+    logout = client.build_logout_url(post_logout_redirect_uri="http://localhost:3000/")
     assert authorize.startswith("http://localhost:8080/realms/saas/protocol/openid-connect/auth")
     assert logout.startswith("http://localhost:8080/realms/saas/protocol/openid-connect/logout")
+    # The logout URL is handed to the browser — it must never carry a token.
+    assert "id_token_hint" not in logout and "client_id=saas-backend" in logout
     # Backchannel endpoints stay on the internal hostname.
     assert client._token_url.startswith("http://keycloak:8080/")  # type: ignore[attr-defined]
     assert client._userinfo_url.startswith("http://keycloak:8080/")  # type: ignore[attr-defined]

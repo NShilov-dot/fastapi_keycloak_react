@@ -91,6 +91,7 @@ Raise `DomainError` subclasses from domain/service code (never put HTTP status i
 Same-origin by design: both the Vite dev proxy (`vite.config.ts`) and production nginx (`frontend/nginx.conf`) forward `/v1/*` to the backend **without rewriting the path** — keep it that way or you break the path-scoped `oidc_state` cookie. `api/client.ts` sends every request with `credentials: 'include'` and bounces to `/v1/auth/login` on 401 (`AuthProvider.tsx` has a sessionStorage-based loop breaker: max 3 redirects / 10s). `auth/access.ts` (`canManageTask`, `isOwnTask`) is **UX gating only — the backend is the security boundary** and must independently authorize every endpoint.
 
 ## Critical invariants & footguns
+- **The SPA is never a Keycloak client.** No keycloak-js / public clients / tokens in the browser (not even `id_token_hint` in the logout URL); `saas-backend.webOrigins` stays empty and `admin-cli` is declared *disabled* in `realm-export.json` (Keycloak otherwise auto-creates it public with password grant). Guarded by `tests/test_realm_export.py` and the `azp == OIDC_CLIENT_ID` check (`verify_access_token` in `core/deps.py` — the one verification policy for callback + requests).
 - **Never trust `tenant_id` from input.** It comes solely from the verified token claim via `PrincipalDep`.
 - **Repositories `flush()`, the request dependency commits.** Don't `commit()` inside a repo or service.
 - **`SET LOCAL search_path` must stay transaction-scoped.** Don't drop `LOCAL` or set search_path on a session you reuse.

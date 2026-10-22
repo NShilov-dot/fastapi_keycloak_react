@@ -103,6 +103,7 @@ async def verify_token(
     roles_claim: str,
     leeway_seconds: int,
     expected_token_types: frozenset[str] = frozenset(),
+    authorized_party: str | None = None,
 ) -> Principal:
     """Verify a Keycloak access token and produce a Principal.
 
@@ -114,6 +115,10 @@ async def verify_token(
     *header* typ is always "JWT" and cannot distinguish them). This is the one trust
     boundary asserting "this is an access token", rejecting an id/refresh/logout token
     presented in its place. Checked after signature verification. Empty set disables it.
+
+    `authorized_party`, when set, must equal the `azp` claim — the client the token
+    was issued to — so only tokens minted for the BFF's own confidential client are
+    honoured, never one obtained by any other (e.g. public/SPA) client of the realm.
     """
     def _fail(reason: str) -> AuthError:
         logger.warning("auth.token_rejected", reason=reason)
@@ -163,6 +168,9 @@ async def verify_token(
     # Token-type check on the verified PAYLOAD claim (not the JOSE header).
     if expected_token_types and claims.get("typ") not in expected_token_types:
         raise _fail(f"unexpected_token_type:{claims.get('typ')}")
+
+    if authorized_party is not None and claims.get("azp") != authorized_party:
+        raise _fail(f"unexpected_authorized_party:{claims.get('azp')}")
 
     subject = claims.get("sub")
     if not isinstance(subject, str):

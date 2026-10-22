@@ -6,6 +6,7 @@ import pytest
 from starlette.requests import Request
 
 from app.config import Settings
+from app.core import deps
 from app.core.deps import check_csrf, client_ip
 from app.core.errors import CsrfError
 
@@ -68,3 +69,17 @@ def test_client_ip_prefers_x_real_ip_over_socket() -> None:
 
 def test_client_ip_falls_back_to_socket_when_no_header() -> None:
     assert client_ip(_request("GET", {})) == "1.2.3.4"
+
+
+@pytest.mark.asyncio
+async def test_session_tokens_are_pinned_to_the_bff_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The azp pin must be the OIDC client id (not e.g. the audience) and typ enforced.
+    seen: dict[str, object] = {}
+
+    async def _capture(token: str, **kw: object) -> None:
+        seen.update(kw)
+
+    monkeypatch.setattr(deps, "verify_token", _capture)
+    await deps.verify_access_token("t", jwks=None, settings=_SETTINGS)  # type: ignore[arg-type]
+    assert seen["authorized_party"] == _SETTINGS.oidc_client_id
+    assert seen["expected_token_types"] == frozenset({"Bearer"})

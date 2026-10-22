@@ -73,6 +73,21 @@ SessionStoreDep = Annotated[SessionStore, Depends(_session_store_dep)]
 _REFRESH_LEEWAY_SECONDS = 30
 
 
+async def verify_access_token(token: str, *, jwks: JWKSCache, settings: Settings) -> Principal:
+    """The single verification policy for BFF-held tokens (callback + every request),
+    so the two call sites can't drift apart (the callback once skipped the typ check)."""
+    return await verify_token(
+        token,
+        jwks=jwks,
+        audience=settings.keycloak_audience,
+        tenant_claim=settings.keycloak_tenant_claim,
+        roles_claim=settings.keycloak_roles_claim,
+        leeway_seconds=settings.keycloak_leeway_seconds,
+        expected_token_types=frozenset(settings.keycloak_expected_token_types),
+        authorized_party=settings.oidc_client_id,
+    )
+
+
 async def _maybe_refresh(
     sid: str,
     data: SessionData,
@@ -98,7 +113,6 @@ async def _maybe_refresh(
         subject=data.subject,
         access_token=tokens.access_token,
         refresh_token=tokens.refresh_token or data.refresh_token,
-        id_token=tokens.id_token or data.id_token,
         access_expires_at=int(time.time()) + tokens.expires_in,
         created_at=data.created_at,
     )
@@ -124,15 +138,7 @@ async def _principal(
     data = await _maybe_refresh(sid, data, oidc=oidc, store=store)
 
     try:
-        principal = await verify_token(
-            data.access_token,
-            jwks=jwks,
-            audience=settings.keycloak_audience,
-            tenant_claim=settings.keycloak_tenant_claim,
-            roles_claim=settings.keycloak_roles_claim,
-            leeway_seconds=settings.keycloak_leeway_seconds,
-            expected_token_types=frozenset(settings.keycloak_expected_token_types),
-        )
+        principal = await verify_access_token(data.access_token, jwks=jwks, settings=settings)
     except AuthError:
         # Session-backed token failed verification — kill the session.
         await store.delete(sid)

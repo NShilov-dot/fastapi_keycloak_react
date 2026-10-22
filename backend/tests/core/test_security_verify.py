@@ -139,6 +139,19 @@ async def test_wrong_signature_is_rejected() -> None:
 
 
 @pytest.mark.asyncio
+async def test_token_issued_to_another_client_is_rejected() -> None:
+    """azp pins tokens to the BFF's own client: a token some other (public/SPA)
+    client of the realm obtained must never be honoured."""
+    priv, jwks = _key_and_jwks()
+    with pytest.raises(AuthError) as exc:
+        await _verify(_token(priv, azp="admin-cli"), jwks, authorized_party=_AUD)
+    assert "unexpected_authorized_party" in str(exc.value)
+
+    principal = await _verify(_token(priv, azp=_AUD), jwks, authorized_party=_AUD)
+    assert principal.subject == "user-123"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("encoding", [serialization.Encoding.PEM, serialization.Encoding.DER])
 async def test_hs256_forged_with_the_public_key_is_rejected(
     encoding: serialization.Encoding,
