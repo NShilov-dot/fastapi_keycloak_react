@@ -1,22 +1,20 @@
 import { Link } from 'react-router-dom'
-import type { Task } from '../types/api'
+import { PRIORITY_LABEL, isOverdue, type Task, type TaskPriority } from '../models/task'
+import { isOwnTask, ownerLabel } from '../models/user'
 import { useAuth } from '../auth/AuthProvider'
-import { isOwnTask } from '../auth/access'
 import { StatusBadge } from './StatusBadge'
 import { Card } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 
-const PRIORITY_LABEL = { low: 'Low', medium: 'Med', high: 'High' } as const
-const PRIORITY_DOT   = { low: 'bg-gray-400', medium: 'bg-yellow-400', high: 'bg-red-500' } as const
+const PRIORITY_DOT: Record<TaskPriority, string> = {
+  low: 'bg-gray-400',
+  medium: 'bg-yellow-400',
+  high: 'bg-red-500',
+}
 
 export function TaskCard({ task }: { task: Task }) {
   const { user } = useAuth()
   const own = isOwnTask(user, task.owner_id)
-  const due = task.due_at ? new Date(task.due_at) : null
-  const overdue =
-    due !== null &&
-    due < new Date() &&
-    task.status !== 'done' &&
-    task.status !== 'cancelled'
 
   return (
     <Link
@@ -36,21 +34,22 @@ export function TaskCard({ task }: { task: Task }) {
 
         <div className="flex items-center gap-3 mt-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1">
-            <span className={`w-1.5 h-1.5 rounded-full ${PRIORITY_DOT[task.priority]}`} />
+            <span className={cn('w-1.5 h-1.5 rounded-full', PRIORITY_DOT[task.priority])} />
             {PRIORITY_LABEL[task.priority]}
           </span>
-          {due && (
-            <span className={overdue ? 'text-red-600 dark:text-red-400 font-medium' : ''}>
-              Due {due.toLocaleDateString()}
+          {task.due_at && (
+            <span className={cn(isOverdue(task) && 'text-red-600 dark:text-red-400 font-medium')}>
+              Due {new Date(task.due_at).toLocaleDateString()}
             </span>
           )}
           <span
-            className={`ml-auto px-1.5 py-0.5 rounded text-[11px] ${
-              own ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground'
-            }`}
+            className={cn(
+              'ml-auto px-1.5 py-0.5 rounded text-[11px]',
+              own ? 'bg-primary/10 text-primary' : 'bg-muted text-muted-foreground',
+            )}
             title={own ? 'Your task' : `Owner ${task.owner_id}`}
           >
-            {own ? 'You' : task.owner_id.slice(0, 8)}
+            {ownerLabel(user, task.owner_id)}
           </span>
         </div>
       </Card>

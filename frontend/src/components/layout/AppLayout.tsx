@@ -9,7 +9,6 @@ export function AppLayout({ children }: { children: ReactNode }) {
       <div className="flex min-h-screen bg-background">
         <AppSidebar />
 
-        {/* Main column — flex-1 so it rescales as the sidebar width animates */}
         <div className="flex flex-1 flex-col min-w-0">
           <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-background/95 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/60">
             <SidebarTrigger />

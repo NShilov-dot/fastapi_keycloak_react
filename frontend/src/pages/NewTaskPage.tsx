@@ -3,7 +3,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { tasksApi, CreateTaskInput } from '../api/tasks'
+import { taskKeys, tasksApi, type CreateTaskInput } from '../api/tasks'
+import { DESCRIPTION_MAX, PRIORITY_LABEL, TASK_PRIORITIES, TITLE_MAX } from '../models/task'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -24,16 +25,16 @@ import {
 } from '@/components/ui/select'
 
 const formSchema = z.object({
-  title: z.string().trim().min(1, 'Title is required').max(200, 'Title is too long'),
-  description: z.string().trim().max(4000, 'Description is too long').optional(),
-  priority: z.enum(['low', 'medium', 'high']),
+  title: z.string().trim().min(1, 'Title is required').max(TITLE_MAX, 'Title is too long'),
+  description: z.string().trim().max(DESCRIPTION_MAX, 'Description is too long').optional(),
+  priority: z.enum(TASK_PRIORITIES),
   dueAt: z.string().optional(),
 })
 
 type FormValues = z.infer<typeof formSchema>
 
 export default function NewTaskPage() {
-  const navigate    = useNavigate()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
 
   const form = useForm<FormValues>({
@@ -44,23 +45,22 @@ export default function NewTaskPage() {
   const { mutate, isPending } = useMutation({
     mutationFn: (input: CreateTaskInput) => tasksApi.create(input),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: taskKeys.lists() })
       navigate('/tasks')
     },
   })
 
   function onSubmit(values: FormValues) {
     mutate({
-      title:       values.title,
+      title: values.title,
       description: values.description || undefined,
-      priority:    values.priority,
-      due_at:      values.dueAt ? new Date(values.dueAt).toISOString() : undefined,
+      priority: values.priority,
+      due_at: values.dueAt ? new Date(values.dueAt).toISOString() : undefined,
     })
   }
 
   return (
     <div className="max-w-lg">
-      {/* Breadcrumb */}
       <div className="flex items-center gap-2 mb-6 text-sm">
         <Link to="/tasks" className="text-muted-foreground hover:text-foreground">← Tasks</Link>
         <span className="text-muted-foreground/50">/</span>
@@ -81,7 +81,7 @@ export default function NewTaskPage() {
                 <FormControl>
                   <Input
                     placeholder="What needs to be done?"
-                    maxLength={200}
+                    maxLength={TITLE_MAX}
                     autoFocus
                     {...field}
                   />
@@ -100,7 +100,7 @@ export default function NewTaskPage() {
                 <FormControl>
                   <Textarea
                     rows={3}
-                    maxLength={4000}
+                    maxLength={DESCRIPTION_MAX}
                     placeholder="Optional details…"
                     className="resize-none"
                     {...field}
@@ -125,9 +125,11 @@ export default function NewTaskPage() {
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value="low">Low</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="high">High</SelectItem>
+                      {TASK_PRIORITIES.map((p) => (
+                        <SelectItem key={p} value={p}>
+                          {PRIORITY_LABEL[p]}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                   <FormMessage />
@@ -150,7 +152,6 @@ export default function NewTaskPage() {
             />
           </div>
 
-          {/* Actions */}
           <div className="flex justify-end gap-3 pt-1">
             <Button asChild variant="ghost">
               <Link to="/tasks">Cancel</Link>

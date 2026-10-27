@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Building2, CheckCircle2 } from 'lucide-react'
-import { signupApi, SignupInput, SignupResult } from '../api/signup'
+import { signupApi, type SignupInput, type SignupResult } from '../api/signup'
 import { getErrorMessage } from '../lib/errors'
 import { Button } from '@/components/ui/button'
 import {
@@ -26,8 +26,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 
-// Mirrors the backend SignupRequest (app/schemas/tenant.py):
-// slug pattern + 12-char password floor are enforced server-side too.
+// Mirrors backend SignupRequest (app/schemas/tenant.py), which re-validates.
 const schema = z
   .object({
     company_name: z.string().trim().min(1, 'Company name is required').max(200),
@@ -96,7 +95,6 @@ export default function SignupPage() {
               </CardDescription>
             </CardHeader>
             <CardFooter>
-              {/* Full navigation — the OIDC login lives on the backend origin. */}
               <Button className="w-full" onClick={() => window.location.assign(created.login_url)}>
                 Continue to sign in
               </Button>
@@ -110,7 +108,7 @@ export default function SignupPage() {
               </div>
               <CardTitle>Register your company</CardTitle>
               <CardDescription>
-                Create your organisation and its first administrator account.
+                Create your organization and its first administrator account.
               </CardDescription>
             </CardHeader>
             <CardContent>

@@ -24,8 +24,7 @@ export function useSidebar() {
 const STORAGE_KEY = 'sidebar:collapsed'
 
 export function SidebarProvider({ children }: { children: ReactNode }) {
-  // Initialise from localStorage synchronously so the first paint already has
-  // the right width (no collapse flicker on load).
+  // Read synchronously so the first paint has the right width (no flicker).
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) === 'true'

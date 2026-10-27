@@ -32,7 +32,7 @@ export default function HomePage() {
               <ListTodo className="h-5 w-5 text-primary" /> Tasks
             </CardTitle>
             <CardDescription>
-              Browse, create and manage your organisation's tasks.
+              Browse, create and manage your organization's tasks.
             </CardDescription>
           </CardHeader>
           <CardContent>

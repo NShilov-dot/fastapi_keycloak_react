@@ -1,14 +1,7 @@
 import { ApiError } from '../api/client'
 
-// Best-effort human-readable message for a failed request, used for toasts.
-//
-// The backend envelopes every error as:
-//   { "error": { "code", "message", "details": [{ "field", "message" }] },
-//     "meta":  { "requestId" } }
-// (see backend app/core/error_handlers.py). So the real reason lives at
-// `body.error.message`, and 422 validation errors carry per-field messages in
-// `body.error.details[].message`. 401 is handled separately (OIDC redirect) and
-// never reaches here.
+// Human-readable message for a failed request. The backend envelope is
+// { error: { code, message, details: [{ field, message }] } } (core/error_handlers.py).
 export function getErrorMessage(
   err: unknown,
   fallback = 'Something went wrong. Please try again.',
@@ -20,8 +13,7 @@ export function getErrorMessage(
       if (envelope && typeof envelope === 'object') {
         const e = envelope as Record<string, unknown>
 
-        // Validation errors: the top-level message is generic ("Request
-        // validation failed") — the field-level messages are what's actionable.
+        // On 422 the top-level message is generic; the field messages are actionable.
         if (Array.isArray(e.details) && e.details.length > 0) {
           const fieldMsgs = e.details
             .map((d) =>
@@ -36,7 +28,7 @@ export function getErrorMessage(
         if (typeof e.message === 'string') return e.message
       }
 
-      // Fallback for any non-enveloped source (e.g. a proxy/CDN error page).
+      // Non-enveloped body, e.g. from a proxy.
       const detail = (body as Record<string, unknown>).detail
       if (typeof detail === 'string') return detail
       const message = (body as Record<string, unknown>).message

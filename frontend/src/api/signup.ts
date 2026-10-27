@@ -10,7 +10,6 @@ export interface SignupInput {
 export interface SignupResult {
   tenant_id: string
   slug: string
-  // Backend-provided URL to start the OIDC login right after signing up.
   login_url: string
 }
 

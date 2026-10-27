@@ -1,8 +1,11 @@
+import { type ReactNode } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { tasksApi } from '../api/tasks'
+import { taskKeys, tasksApi } from '../api/tasks'
 import { useAuth } from '../auth/AuthProvider'
-import { canManageTask, isOwnTask } from '../auth/access'
+import { PRIORITY_LABEL, isActive } from '../models/task'
+import { canManageTask, ownerLabel } from '../models/user'
+import { getErrorMessage } from '../lib/errors'
 import { StatusBadge } from '../components/StatusBadge'
 import { LoadingSpinner } from '../components/LoadingSpinner'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -18,53 +21,65 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 
-const PRIORITY_LABEL = { low: 'Low', medium: 'Medium', high: 'High' } as const
+type Transition = 'start' | 'complete' | 'cancel'
+
+function Meta({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <dt className="text-muted-foreground text-xs uppercase tracking-wide mb-0.5">{label}</dt>
+      <dd className="text-foreground">{children}</dd>
+    </div>
+  )
+}
 
 export default function TaskDetailPage() {
-  const { id }      = useParams<{ id: string }>()
-  const navigate    = useNavigate()
-  const qc          = useQueryClient()
-  const { user }    = useAuth()
+  const { id = '' } = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const qc = useQueryClient()
+  const { user } = useAuth()
 
-  const { data, isLoading } = useQuery({
-    queryKey: ['tasks', id],
-    queryFn:  () => tasksApi.get(id!),
-    enabled:  !!id,
+  const { data: task, isLoading, error } = useQuery({
+    queryKey: taskKeys.detail(id),
+    queryFn: () => tasksApi.get(id),
+    enabled: !!id,
   })
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['tasks'] })
+  const transition = useMutation({
+    mutationFn: (action: Transition) => tasksApi[action](id),
+    onSuccess: (updated) => {
+      qc.setQueryData(taskKeys.detail(id), updated)
+      qc.invalidateQueries({ queryKey: taskKeys.lists() })
+    },
+  })
 
-  const startM    = useMutation({ mutationFn: () => tasksApi.start(id!),    onSuccess: invalidate })
-  const completeM = useMutation({ mutationFn: () => tasksApi.complete(id!), onSuccess: invalidate })
-  const cancelM   = useMutation({ mutationFn: () => tasksApi.cancel(id!),   onSuccess: invalidate })
-  const deleteM   = useMutation({
-    mutationFn: () => tasksApi.delete(id!),
+  const remove = useMutation({
+    mutationFn: () => tasksApi.delete(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.removeQueries({ queryKey: taskKeys.detail(id) })
+      qc.invalidateQueries({ queryKey: taskKeys.lists() })
       navigate('/tasks')
     },
   })
 
-  const busy = startM.isPending || completeM.isPending || cancelM.isPending || deleteM.isPending
-
   if (isLoading) return <LoadingSpinner />
+  if (!task) {
+    return (
+      <p className="text-muted-foreground py-8">
+        {error ? getErrorMessage(error) : 'Task not found.'}
+      </p>
+    )
+  }
 
-  const task = data?.data
-  if (!task) return <p className="text-muted-foreground py-8">Task not found.</p>
-
-  const s = task.status
-  const own = isOwnTask(user, task.owner_id)
-  const canManage = canManageTask(user, task.owner_id)
+  const busy = transition.isPending || remove.isPending
+  const active = isActive(task.status)
 
   return (
     <div className="max-w-lg">
-      {/* Breadcrumb */}
       <div className="flex items-center gap-2 mb-6 text-sm">
         <Link to="/tasks" className="text-muted-foreground hover:text-foreground">← Tasks</Link>
       </div>
 
       <div className="bg-card border border-border rounded-lg p-6">
-        {/* Header */}
         <div className="flex items-start justify-between gap-2 mb-4">
           <h1 className="text-xl font-semibold text-foreground leading-snug">{task.title}</h1>
           <StatusBadge status={task.status} />
@@ -76,55 +91,34 @@ export default function TaskDetailPage() {
           </p>
         )}
 
-        {/* Meta grid */}
         <dl className="grid grid-cols-2 gap-y-3 text-sm mb-6">
-          <div>
-            <dt className="text-muted-foreground text-xs uppercase tracking-wide mb-0.5">Owner</dt>
-            <dd className="text-foreground font-medium" title={task.owner_id}>
-              {own ? 'You' : task.owner_id.slice(0, 8)}
-            </dd>
-          </div>
-
-          <div>
-            <dt className="text-muted-foreground text-xs uppercase tracking-wide mb-0.5">Priority</dt>
-            <dd className="text-foreground font-medium">{PRIORITY_LABEL[task.priority]}</dd>
-          </div>
-
-          {task.due_at && (
-            <div>
-              <dt className="text-muted-foreground text-xs uppercase tracking-wide mb-0.5">Due</dt>
-              <dd className="text-foreground">{new Date(task.due_at).toLocaleString()}</dd>
-            </div>
-          )}
-
+          <Meta label="Owner">
+            <span className="font-medium" title={task.owner_id}>{ownerLabel(user, task.owner_id)}</span>
+          </Meta>
+          <Meta label="Priority">
+            <span className="font-medium">{PRIORITY_LABEL[task.priority]}</span>
+          </Meta>
+          {task.due_at && <Meta label="Due">{new Date(task.due_at).toLocaleString()}</Meta>}
           {task.completed_at && (
-            <div>
-              <dt className="text-muted-foreground text-xs uppercase tracking-wide mb-0.5">Completed</dt>
-              <dd className="text-foreground">{new Date(task.completed_at).toLocaleString()}</dd>
-            </div>
+            <Meta label="Completed">{new Date(task.completed_at).toLocaleString()}</Meta>
           )}
-
-          <div>
-            <dt className="text-muted-foreground text-xs uppercase tracking-wide mb-0.5">Created</dt>
-            <dd className="text-foreground">{new Date(task.created_at).toLocaleDateString()}</dd>
-          </div>
+          <Meta label="Created">{new Date(task.created_at).toLocaleDateString()}</Meta>
         </dl>
 
-        {/* Action buttons — only the owner (or a tenant admin) can modify a task */}
-        {canManage ? (
+        {canManageTask(user, task.owner_id) ? (
           <div className="flex flex-wrap gap-2 pt-4 border-t border-border">
-            {s === 'open' && (
-              <Button variant="outline" size="sm" onClick={() => startM.mutate()} disabled={busy}>
+            {task.status === 'open' && (
+              <Button variant="outline" size="sm" onClick={() => transition.mutate('start')} disabled={busy}>
                 Start
               </Button>
             )}
-            {(s === 'open' || s === 'in_progress') && (
-              <Button variant="outline" size="sm" onClick={() => completeM.mutate()} disabled={busy}>
+            {active && (
+              <Button variant="outline" size="sm" onClick={() => transition.mutate('complete')} disabled={busy}>
                 Complete
               </Button>
             )}
-            {(s === 'open' || s === 'in_progress') && (
-              <Button variant="outline" size="sm" onClick={() => cancelM.mutate()} disabled={busy}>
+            {active && (
+              <Button variant="outline" size="sm" onClick={() => transition.mutate('cancel')} disabled={busy}>
                 Cancel
               </Button>
             )}
@@ -145,7 +139,7 @@ export default function TaskDetailPage() {
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
                     className={buttonVariants({ variant: 'destructive' })}
-                    onClick={() => deleteM.mutate()}
+                    onClick={() => remove.mutate()}
                   >
                     Delete
                   </AlertDialogAction>

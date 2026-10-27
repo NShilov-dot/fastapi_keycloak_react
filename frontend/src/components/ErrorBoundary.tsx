@@ -1,4 +1,4 @@
-import { Component, ReactNode, ErrorInfo } from 'react'
+import { Component, type ReactNode, type ErrorInfo } from 'react'
 import { Button } from '@/components/ui/button'
 
 interface Props {
@@ -20,15 +20,13 @@ export class ErrorBoundary extends Component<Props, State> {
     if (import.meta.env.DEV) console.error('[ErrorBoundary]', error, info.componentStack)
   }
 
-  reset = () => this.setState({ error: null })
-
   render() {
-    const { error } = this.state
-    if (error) {
+    if (this.state.error) {
       return (
         <div className="flex flex-col items-center justify-center py-24 gap-4">
           <p className="text-muted-foreground text-sm">Something went wrong.</p>
-          <Button variant="outline" onClick={this.reset}>
+          {/* A full reload: React.lazy caches a failed chunk import (e.g. after a deploy). */}
+          <Button variant="outline" onClick={() => window.location.reload()}>
             Try again
           </Button>
         </div>

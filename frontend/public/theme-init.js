@@ -1,8 +1,5 @@
-// Pre-paint theme: apply the persisted/system colour scheme before the app
-// bundle mounts, so dark-mode users don't see a light flash (next-themes only
-// runs after its JS loads). Served from origin as a plain blocking script to
-// satisfy the strict CSP (script-src 'self' — inline scripts are blocked).
-// Mirrors next-themes' default storage key ('theme').
+// Apply the theme before the bundle loads (no dark-mode flash). A file, not an
+// inline script, because the CSP is script-src 'self'. Uses next-themes' 'theme' key.
 (function () {
   try {
     var stored = localStorage.getItem('theme')
