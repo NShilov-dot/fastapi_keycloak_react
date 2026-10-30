@@ -36,6 +36,7 @@ export default function App() {
             <Route path="/tasks/new" element={<NewTaskPage />} />
             <Route path="/tasks/:id" element={<TaskDetailPage />} />
             <Route path="/profile" element={<ProfilePage />} />
+            <Route path="*" element={<p className="text-muted-foreground py-8">Page not found.</p>} />
           </Route>
         </Routes>
       </Suspense>

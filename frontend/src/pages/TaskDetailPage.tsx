@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react'
 import { useNavigate, useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { ApiError } from '../api/client'
 import { taskKeys, tasksApi } from '../api/tasks'
 import { useAuth } from '../auth/AuthProvider'
 import { PRIORITY_LABEL, isActive } from '../models/task'
@@ -50,19 +51,23 @@ export default function TaskDetailPage() {
       qc.setQueryData(taskKeys.detail(id), updated)
       qc.invalidateQueries({ queryKey: taskKeys.lists() })
     },
+    // 404/409 mean the task changed under us: reload the server's state.
+    onError: () => qc.invalidateQueries({ queryKey: taskKeys.detail(id) }),
   })
 
   const remove = useMutation({
     mutationFn: () => tasksApi.delete(id),
+    // Leave the detail query alone: navigate() runs in a transition, so this page
+    // re-renders once more and would refetch (404) a removed or invalidated query.
     onSuccess: () => {
-      qc.removeQueries({ queryKey: taskKeys.detail(id) })
       qc.invalidateQueries({ queryKey: taskKeys.lists() })
-      navigate('/tasks')
+      navigate('/tasks', { replace: true })
     },
   })
 
   if (isLoading) return <LoadingSpinner />
-  if (!task) {
+  const gone = error instanceof ApiError && error.status === 404
+  if (!task || gone) {
     return (
       <p className="text-muted-foreground py-8">
         {error ? getErrorMessage(error) : 'Task not found.'}

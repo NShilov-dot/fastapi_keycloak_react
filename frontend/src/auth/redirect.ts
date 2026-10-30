@@ -6,6 +6,10 @@ const MAX_REDIRECTS = 3
 
 // Parallel 401s on one page load are a single expiry, not a loop.
 let redirecting = false
+// Back from the login page restores this page from bfcache with the flag still set.
+window.addEventListener('pageshow', (e) => {
+  if (e.persisted) redirecting = false
+})
 
 function recentRedirects(now: number): number[] {
   try {
